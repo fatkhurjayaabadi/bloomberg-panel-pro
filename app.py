@@ -11,7 +11,6 @@ st.set_page_config(page_title="Bloomberg Panel Pro", page_icon="💠", layout="w
 
 st.markdown("""
     <style>
-        /* Tipografi & Latar Belakang */
         .premium-title {
             background: linear-gradient(135deg, #1A2980 0%, #26D0CE 100%);
             -webkit-background-clip: text;
@@ -30,8 +29,6 @@ st.markdown("""
             margin-bottom: 35px;
             letter-spacing: 0.5px;
         }
-        
-        /* Tombol Utama Bergaya Modern SaaS */
         .stButton>button {
             background: linear-gradient(135deg, #0F2027 0%, #203A43 50%, #2C5364 100%);
             color: white;
@@ -48,8 +45,6 @@ st.markdown("""
             box-shadow: 0 12px 25px rgba(0, 0, 0, 0.3);
             border-color: #26D0CE;
         }
-
-        /* Kartu Metrik (Glassmorphism) */
         div[data-testid="metric-container"] {
             background: linear-gradient(145deg, #ffffff, #f0f4f8);
             border-left: 5px solid #26D0CE;
@@ -57,16 +52,11 @@ st.markdown("""
             border-radius: 12px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.04);
         }
-        div[data-testid="metric-container"] label {
-            color: #475569 !important;
-            font-weight: 700;
-            font-size: 14px;
-        }
     </style>
 """, unsafe_allow_html=True)
 
 st.markdown("<div class='premium-title'>Bloomberg Panel Engine</div>", unsafe_allow_html=True)
-st.markdown("<div class='premium-subtitle'>Mendeteksi Otomatis, Menghapus Duplikat Cerdas, & Membangun Stata Panel</div>", unsafe_allow_html=True)
+st.markdown("<div class='premium-subtitle'>Mendeteksi Otomatis, Menghapus Duplikat Lintas Negara, & Membangun Stata Panel</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 2. KAMUS NEGARA GLOBAL
@@ -119,15 +109,19 @@ with st.sidebar:
         start_year = col1.number_input("Dari", value=2015, step=1)
         end_year = col2.number_input("Sampai", value=2025, step=1)
 
+    with st.expander("🌍 Koreksi Sandi Negara", expanded=True):
+        st.caption("Timpa kode bursa aneh menjadi nama negara utuh (pisahkan dengan koma atau baris baru).")
+        custom_map_str = st.text_area("Format: KODE=NEGARA", value="EO=OMAN,\nEU=OMAN,\nEP=OMAN,\nEZ=OMAN,\nB3=OMAN,\nL1=OMAN,\nL3=OMAN,\nLI=OMAN,\nS2=OMAN")
+
     with st.expander("🛡️ Kecerdasan Pembersih Duplikat", expanded=True):
         opsi_duplikat = st.radio(
             "Pilih Mode Deteksi:",
             [
                 "Biarkan semua data (Jangan hapus)", 
                 "Hapus jika NAMA BANK persis sama",
-                "Hapus jika NILAI DATA sama (Simpan nama bank yang terpendek/paling bersih)"
+                "Hapus jika NILAI DATA sama (Silang Negara)"
             ],
-            help="Opsi ke-3 sangat cerdas: Jika ada Bank A dan Bank A Tbk memiliki deretan angka 2015-2025 yang identik, sistem akan menghapus Bank A Tbk dan menyisakan nama yang lebih rapi."
+            help="Menghapus duplikat nilai data secara global dan menyisakan satu nama bank terpendek (paling rapi)."
         )
 
     with st.expander("⚖️ Desain Tabel Stata", expanded=True):
@@ -135,6 +129,14 @@ with st.sidebar:
             "Format Panel Data:",
             ["Unbalanced (Aman & Fleksibel)", "Balanced (Ketat & Utuh)"]
         )
+
+# Memproses Input Kamus Negara Kustom
+custom_country_map = {}
+if custom_map_str:
+    for item in custom_map_str.replace('\n', ',').split(','):
+        if '=' in item:
+            k, v = item.split('=')
+            custom_country_map[k.strip().upper()] = v.strip().upper()
 
 # ==========================================
 # 4. AREA KERJA UTAMA
@@ -159,13 +161,12 @@ if mulai_proses:
     if not uploaded_files:
         st.warning("⚠️ Anda belum mengunggah file Excel apa pun.")
     else:
-        # Kamus untuk menampung data mentah (format menyamping) berdasarkan nama variabelnya
         dict_variabel_dfs_wide = {}
         
-        with st.status("🛠️ Mesin AI sedang membedah dan membersihkan ratusan file...", expanded=True) as status:
+        with st.status("🛠️ Membedah file dan memetakan kode negara...", expanded=True) as status:
             progress_bar = st.progress(0)
             
-            # TAHAP 1: Ekstraksi seluruh file ke memori
+            # TAHAP 1: Ekstraksi Data
             for i, file in enumerate(uploaded_files):
                 df = pd.read_excel(file, engine='openpyxl')
                 year_cols = [col for col in df.columns if ":" in str(col)]
@@ -178,13 +179,14 @@ if mulai_proses:
                 
                 df = df.drop([0, 1]).reset_index(drop=True)
                 df['country_code'] = df['Ticker'].apply(get_country_code)
-                df['country'] = df['country_code'].map(country_map).fillna(df['country_code'])
+                
+                # Penerapan Koreksi Negara Bertingkat (Kustom -> Standar -> Asli)
+                df['country'] = df['country_code'].map(custom_country_map).fillna(df['country_code'].map(country_map)).fillna(df['country_code'])
                 df = df.rename(columns={'Name': 'bank'})
                 
                 df['bank'] = df['bank'].astype(str).str.strip().str.upper()
                 df['country'] = df['country'].astype(str).str.strip().str.upper()
                 
-                # Saring tahun yang valid dan ubah nama kolom menjadi angka (int)
                 valid_year_cols = [col for col in year_cols if start_year <= int(str(col).split(":")[1][:4]) <= end_year]
                 rename_dict = {col: int(str(col).split(":")[1][:4]) for col in valid_year_cols}
                 
@@ -194,7 +196,6 @@ if mulai_proses:
                 df = df.rename(columns=rename_dict)
                 valid_year_ints = list(rename_dict.values())
                 
-                # Simpan dalam format WIDE (menyamping)
                 df_wide = df[['country', 'bank'] + valid_year_ints]
                 
                 if clean_var_name not in dict_variabel_dfs_wide:
@@ -203,9 +204,9 @@ if mulai_proses:
                 
                 progress_bar.progress((i + 1) / len(uploaded_files))
             
-            st.caption("🔄 Mengidentifikasi duplikat dan memilih penulisan nama bank terbaik...")
+            st.caption("🔄 Mengidentifikasi duplikat cerdas silang-negara...")
             
-            # TAHAP 2: Pembersihan Lintas-File & Perubahan Format
+            # TAHAP 2: Pembersihan Lintas-Negara & Perubahan Format
             all_processed_dfs = []
             variabel_list = list(dict_variabel_dfs_wide.keys())
             
@@ -213,29 +214,38 @@ if mulai_proses:
                 df_var = pd.concat(list_dfs, ignore_index=True)
                 year_cols_in_df = [c for c in df_var.columns if isinstance(c, int)]
                 
-                # LOGIKA CERDAS: Hitung panjang karakter nama bank untuk menentukan mana yang "terbersih"
+                # Logika Prioritas: Negara utuh ditaruh di atas, bank terpendek ditaruh di atas
+                df_var['is_standard'] = df_var['country'].str.len() > 2
                 df_var['bank_len'] = df_var['bank'].str.len()
-                df_var = df_var.sort_values(by=['country', 'bank_len', 'bank'])
+                df_var = df_var.sort_values(by=['is_standard', 'bank_len', 'bank'], ascending=[False, True, True])
                 
-                # Eksekusi Penghapusan Duplikat
                 if "NAMA BANK" in opsi_duplikat:
                     df_var = df_var.drop_duplicates(subset=['country', 'bank'], keep='first')
+                
                 elif "NILAI DATA" in opsi_duplikat:
-                    # Menghapus duplikat nilai data (karena nama terpendek ditaruh di atas, ia yang akan selamat)
-                    df_var = df_var.drop_duplicates(subset=['country'] + year_cols_in_df, keep='first')
+                    # Amankan baris yang masih kosong melompong (semua NaN) agar tidak terhapus
+                    has_data = df_var[year_cols_in_df].notna().any(axis=1)
+                    df_with_data = df_var[has_data]
+                    df_no_data = df_var[~has_data]
+                    
+                    # Hapus duplikat nilai data lintas negara
+                    df_with_data = df_with_data.drop_duplicates(subset=year_cols_in_df, keep='first')
+                    
+                    # Satukan kembali
+                    df_var = pd.concat([df_with_data, df_no_data], ignore_index=True)
                 
-                df_var = df_var.drop(columns=['bank_len'])
+                df_var = df_var.drop(columns=['is_standard', 'bank_len'])
                 
-                # Ubah ke format Memanjang (Long Format)
+                # Ubah format menyamping menjadi memanjang (Long/Panel Data)
                 df_long = pd.melt(df_var, id_vars=['country', 'bank'], value_vars=year_cols_in_df, var_name='year', value_name=var_name)
                 df_long = df_long.dropna(subset=[var_name])
                 df_long = df_long.drop_duplicates(subset=['country', 'bank', 'year'], keep='first')
                 
                 all_processed_dfs.append(df_long)
             
-            st.caption("⚙️ Menyusun arsitektur kolom Stata...")
+            st.caption("⚙️ Menyusun arsitektur kolom Stata final...")
             
-            # TAHAP 3: Penggabungan Final
+            # TAHAP 3: Penggabungan Keseluruhan
             if all_processed_dfs:
                 df_master = reduce(lambda left, right: pd.merge(left, right, on=['country', 'bank', 'year'], how='outer'), all_processed_dfs)
                 
@@ -249,7 +259,7 @@ if mulai_proses:
                 kolom_awal = ['country_id', 'bank_id', 'country', 'bank', 'year']
                 df_master = df_master[kolom_awal + variabel_list]
                 
-                status.update(label="✅ Berhasil: Master Data Stata Berhasil Dirakit!", state="complete", expanded=False)
+                status.update(label="✅ Selesai: Master Data Panel Berhasil Dirakit!", state="complete", expanded=False)
                 st.balloons()
                 
                 # ==========================================
@@ -258,12 +268,11 @@ if mulai_proses:
                 st.write("### 📊 Parameter Statistik Akhir")
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("📌 Total Variabel", len(variabel_list))
-                m2.metric("🌍 Zona Negara", df_master['country'].nunique())
-                m3.metric("🏦 Bank Terdaftar", f"{df_master['bank'].nunique():,}")
+                m2.metric("🌍 Zona Negara Tersaring", df_master['country'].nunique())
+                m3.metric("🏦 Total Bank Unik", f"{df_master['bank'].nunique():,}")
                 m4.metric("📈 Total Baris (N)", f"{len(df_master):,}")
                 
                 st.markdown("<br>", unsafe_allow_html=True)
-                # Menyembunyikan Index agar tabel makin mirip software profesional
                 st.dataframe(df_master, use_container_width=True, hide_index=True, height=400)
                 
                 output = io.BytesIO()
@@ -274,7 +283,7 @@ if mulai_proses:
                 c1, c2, c3 = st.columns([1,2,1])
                 with c2:
                     st.download_button(
-                        label="📥 EXPORT DATA (.xlsx)",
+                        label="📥 EXPORT MASTER DATA (.xlsx)",
                         data=output.getvalue(),
                         file_name=f"Master_Stata_Final_{start_year}_{end_year}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -282,4 +291,4 @@ if mulai_proses:
                     )
             else:
                 status.update(label="❌ Terjadi Kesalahan Ekstraksi", state="error", expanded=True)
-                st.error("Gagal menyatukan data. Silakan periksa kembali file Anda.")
+                st.error("Gagal menyatukan data. Silakan periksa kembali file Excel Anda.")
