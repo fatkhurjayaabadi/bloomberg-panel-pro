@@ -3,6 +3,7 @@ import pandas as pd
 import io
 import re
 from functools import reduce
+import numpy as np
 
 # ==========================================
 # 1. PENGATURAN HALAMAN & CSS ULTRA PREMIUM
@@ -56,7 +57,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("<div class='premium-title'>Bloomberg Panel Engine</div>", unsafe_allow_html=True)
-st.markdown("<div class='premium-subtitle'>Mendeteksi Otomatis, Menghapus Duplikat Lintas Negara, & Membangun Stata Panel</div>", unsafe_allow_html=True)
+st.markdown("<div class='premium-subtitle'>Mendeteksi Otomatis, Menghapus Duplikat Lintas Negara, & Membangun Stata Panel Utuh</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 2. KAMUS NEGARA GLOBAL
@@ -107,7 +108,10 @@ with st.sidebar:
     with st.expander("🗓️ Tentukan Rentang Tahun", expanded=True):
         col1, col2 = st.columns(2)
         start_year = col1.number_input("Dari", value=2015, step=1)
-        end_year = col2.number_input("Sampai", value=2025, step=1)
+        end_year = col2.number_input("Sampai", value=2026, step=1)
+
+    with st.expander("🌍 Koreksi Sandi Negara", expanded=True):
+        custom_map_str = st.text_area("Format: KODE=NEGARA", value="EO=OMAN,\nEU=OMAN,\nEP=OMAN,\nEZ=OMAN,\nB3=OMAN,\nL1=OMAN,\nL3=OMAN,\nLI=OMAN,\nS2=OMAN")
 
     with st.expander("🛡️ Kecerdasan Pembersih Duplikat", expanded=True):
         opsi_duplikat = st.radio(
@@ -117,15 +121,22 @@ with st.sidebar:
                 "Hapus jika NAMA BANK persis sama",
                 "Hapus jika NILAI DATA sama (Silang Negara)"
             ],
-            index=2, # FITUR AUTO-SELECT (Agar Pengguna Tidak Perlu Repot Memilih)
-            help="Menghapus duplikat nilai data secara global dan menyisakan satu nama bank terpendek (paling rapi)."
+            index=2,
+            help="Menghapus duplikat dan memaksa nama bank kosong terhapus."
         )
 
     with st.expander("⚖️ Desain Tabel Stata", expanded=True):
         opsi_panel = st.radio(
             "Format Panel Data:",
-            ["Unbalanced (Aman & Fleksibel)", "Balanced (Ketat & Utuh)"]
+            ["Unbalanced (Struktur Tahun Utuh, Ada Nilai Kosong)", "Balanced (Hapus Baris yang Punya Nilai Kosong)"]
         )
+
+custom_country_map = {}
+if custom_map_str:
+    for item in custom_map_str.replace('\n', ',').split(','):
+        if '=' in item:
+            k, v = item.split('=')
+            custom_country_map[k.strip().upper()] = v.strip().upper()
 
 # ==========================================
 # 4. AREA KERJA UTAMA
@@ -152,8 +163,11 @@ if mulai_proses:
     else:
         dict_variabel_dfs_wide = {}
         
-        with st.status("🛠️ Membedah file dan memetakan kode negara...", expanded=True) as status:
+        with st.status("🛠️ Membedah file dan memetakan rentang tahun...", expanded=True) as status:
             progress_bar = st.progress(0)
+            
+            # FITUR BARU 1: Kunci Rentang Tahun Secara Absolut
+            requested_years_list = list(range(start_year, end_year + 1))
             
             # TAHAP 1: Ekstraksi Data
             for i, file in enumerate(uploaded_files):
@@ -169,7 +183,7 @@ if mulai_proses:
                 df = df.drop([0, 1]).reset_index(drop=True)
                 df['country_code'] = df['Ticker'].apply(get_country_code)
                 
-                df['country'] = df['country_code'].map(country_map).fillna(df['country_code'])
+                df['country'] = df['country_code'].map(custom_country_map).fillna(df['country_code'].map(country_map)).fillna(df['country_code'])
                 df = df.rename(columns={'Name': 'bank'})
                 
                 df['bank'] = df['bank'].astype(str).str.strip().str.upper()
@@ -182,9 +196,13 @@ if mulai_proses:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
                     
                 df = df.rename(columns=rename_dict)
-                valid_year_ints = list(rename_dict.values())
                 
-                df_wide = df[['country', 'bank'] + valid_year_ints]
+                # Paksa sistem memunculkan semua tahun yang Anda minta, meskipun datanya kosong melompong
+                for yr in requested_years_list:
+                    if yr not in df.columns:
+                        df[yr] = np.nan
+                
+                df_wide = df[['country', 'bank'] + requested_years_list]
                 
                 if clean_var_name not in dict_variabel_dfs_wide:
                     dict_variabel_dfs_wide[clean_var_name] = []
@@ -192,7 +210,7 @@ if mulai_proses:
                 
                 progress_bar.progress((i + 1) / len(uploaded_files))
             
-            st.caption("🔄 Mengidentifikasi duplikat cerdas silang-negara...")
+            st.caption("🔄 Mengidentifikasi duplikat dan menyeleksi nama bank...")
             
             # TAHAP 2: Pembersihan Lintas-Negara & Perubahan Format
             all_processed_dfs = []
@@ -200,41 +218,40 @@ if mulai_proses:
             
             for var_name, list_dfs in dict_variabel_dfs_wide.items():
                 df_var = pd.concat(list_dfs, ignore_index=True)
-                year_cols_in_df = [c for c in df_var.columns if isinstance(c, int)]
                 
-                # LOGIKA PRIORITAS ANTI-GAGAL:
-                # 1. Negara utuh ditaruh di atas
-                # 2. Singkirkan bank dengan nama kosong ('NAN') ke paling bawah
-                # 3. Bank dengan nama terpendek ditaruh di atas
+                # FITUR BARU 2: Logika Anti-Gagal (Cek Keabsahan Nama Bank)
                 df_var['is_standard'] = df_var['country'].str.len() > 2
-                df_var['is_nan_bank'] = df_var['bank'] == 'NAN'
+                
+                # Mendeteksi apakah nama bank kosong/spasi/NaN. Jika valid nilainya True, jika kosong nilainya False.
+                df_var['is_valid_bank_name'] = df_var['bank'].apply(
+                    lambda x: len(str(x).strip()) >= 2 and str(x).strip().upper() not in ['NAN', 'NONE', 'NULL', 'NA']
+                )
                 df_var['bank_len'] = df_var['bank'].str.len()
                 
+                # Mengurutkan: Bank Valid di atas, Bank Kosong di bawah.
                 df_var = df_var.sort_values(
-                    by=['is_standard', 'is_nan_bank', 'bank_len', 'bank'], 
-                    ascending=[False, True, True, True]
+                    by=['is_standard', 'is_valid_bank_name', 'bank_len', 'bank'], 
+                    ascending=[False, False, True, True]
                 )
                 
                 if "NAMA BANK" in opsi_duplikat:
                     df_var = df_var.drop_duplicates(subset=['country', 'bank'], keep='first')
                 
                 elif "NILAI DATA" in opsi_duplikat:
-                    has_data = df_var[year_cols_in_df].notna().any(axis=1)
+                    has_data = df_var[requested_years_list].notna().any(axis=1)
                     df_with_data = df_var[has_data]
                     df_no_data = df_var[~has_data]
                     
-                    # Hapus duplikat secara radikal tanpa memedulikan nama negara (Silang-Negara)
-                    df_with_data = df_with_data.drop_duplicates(subset=year_cols_in_df, keep='first')
-                    
+                    df_with_data = df_with_data.drop_duplicates(subset=requested_years_list, keep='first')
                     df_var = pd.concat([df_with_data, df_no_data], ignore_index=True)
                 
-                df_var = df_var.drop(columns=['is_standard', 'is_nan_bank', 'bank_len'])
+                df_var = df_var.drop(columns=['is_standard', 'is_valid_bank_name', 'bank_len'])
                 
-                # Ubah format menyamping menjadi memanjang (Long/Panel Data)
-                df_long = pd.melt(df_var, id_vars=['country', 'bank'], value_vars=year_cols_in_df, var_name='year', value_name=var_name)
-                df_long = df_long.dropna(subset=[var_name])
+                # Ubah ke format Panjang (Stata Format)
+                df_long = pd.melt(df_var, id_vars=['country', 'bank'], value_vars=requested_years_list, var_name='year', value_name=var_name)
+                
+                # FITUR BARU 3: Jangan buang data kosong (dropna) di tahap ini agar struktur tahun tetap utuh di setiap bank
                 df_long = df_long.drop_duplicates(subset=['country', 'bank', 'year'], keep='first')
-                
                 all_processed_dfs.append(df_long)
             
             st.caption("⚙️ Menyusun arsitektur kolom Stata final...")
@@ -243,7 +260,7 @@ if mulai_proses:
             if all_processed_dfs:
                 df_master = reduce(lambda left, right: pd.merge(left, right, on=['country', 'bank', 'year'], how='outer'), all_processed_dfs)
                 
-                if "Balanced" in opsi_panel:
+                if "Balanced (" in opsi_panel:
                     df_master = df_master.dropna(subset=variabel_list)
                     
                 df_master = df_master.sort_values(by=['country', 'bank', 'year']).reset_index(drop=True)
@@ -262,9 +279,9 @@ if mulai_proses:
                 st.write("### 📊 Parameter Statistik Akhir")
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("📌 Total Variabel", len(variabel_list))
-                m2.metric("🌍 Zona Negara Tersaring", df_master['country'].nunique())
-                m3.metric("🏦 Total Bank Unik", f"{df_master['bank'].nunique():,}")
-                m4.metric("📈 Total Baris (N)", f"{len(df_master):,}")
+                m2.metric("🌍 Zona Negara", df_master['country'].nunique())
+                m3.metric("🏦 Bank Terdaftar", f"{df_master['bank'].nunique():,}")
+                m4.metric("📈 Total Baris", f"{len(df_master):,}")
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.dataframe(df_master, use_container_width=True, hide_index=True, height=400)
