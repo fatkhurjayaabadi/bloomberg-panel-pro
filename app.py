@@ -109,10 +109,6 @@ with st.sidebar:
         start_year = col1.number_input("Dari", value=2015, step=1)
         end_year = col2.number_input("Sampai", value=2025, step=1)
 
-    with st.expander("🌍 Koreksi Sandi Negara", expanded=True):
-        st.caption("Timpa kode bursa aneh menjadi nama negara utuh (pisahkan dengan koma atau baris baru).")
-        custom_map_str = st.text_area("Format: KODE=NEGARA", value="EO=OMAN,\nEU=OMAN,\nEP=OMAN,\nEZ=OMAN,\nB3=OMAN,\nL1=OMAN,\nL3=OMAN,\nLI=OMAN,\nS2=OMAN")
-
     with st.expander("🛡️ Kecerdasan Pembersih Duplikat", expanded=True):
         opsi_duplikat = st.radio(
             "Pilih Mode Deteksi:",
@@ -121,6 +117,7 @@ with st.sidebar:
                 "Hapus jika NAMA BANK persis sama",
                 "Hapus jika NILAI DATA sama (Silang Negara)"
             ],
+            index=2, # FITUR AUTO-SELECT (Agar Pengguna Tidak Perlu Repot Memilih)
             help="Menghapus duplikat nilai data secara global dan menyisakan satu nama bank terpendek (paling rapi)."
         )
 
@@ -129,14 +126,6 @@ with st.sidebar:
             "Format Panel Data:",
             ["Unbalanced (Aman & Fleksibel)", "Balanced (Ketat & Utuh)"]
         )
-
-# Memproses Input Kamus Negara Kustom
-custom_country_map = {}
-if custom_map_str:
-    for item in custom_map_str.replace('\n', ',').split(','):
-        if '=' in item:
-            k, v = item.split('=')
-            custom_country_map[k.strip().upper()] = v.strip().upper()
 
 # ==========================================
 # 4. AREA KERJA UTAMA
@@ -180,8 +169,7 @@ if mulai_proses:
                 df = df.drop([0, 1]).reset_index(drop=True)
                 df['country_code'] = df['Ticker'].apply(get_country_code)
                 
-                # Penerapan Koreksi Negara Bertingkat (Kustom -> Standar -> Asli)
-                df['country'] = df['country_code'].map(custom_country_map).fillna(df['country_code'].map(country_map)).fillna(df['country_code'])
+                df['country'] = df['country_code'].map(country_map).fillna(df['country_code'])
                 df = df.rename(columns={'Name': 'bank'})
                 
                 df['bank'] = df['bank'].astype(str).str.strip().str.upper()
@@ -214,27 +202,33 @@ if mulai_proses:
                 df_var = pd.concat(list_dfs, ignore_index=True)
                 year_cols_in_df = [c for c in df_var.columns if isinstance(c, int)]
                 
-                # Logika Prioritas: Negara utuh ditaruh di atas, bank terpendek ditaruh di atas
+                # LOGIKA PRIORITAS ANTI-GAGAL:
+                # 1. Negara utuh ditaruh di atas
+                # 2. Singkirkan bank dengan nama kosong ('NAN') ke paling bawah
+                # 3. Bank dengan nama terpendek ditaruh di atas
                 df_var['is_standard'] = df_var['country'].str.len() > 2
+                df_var['is_nan_bank'] = df_var['bank'] == 'NAN'
                 df_var['bank_len'] = df_var['bank'].str.len()
-                df_var = df_var.sort_values(by=['is_standard', 'bank_len', 'bank'], ascending=[False, True, True])
+                
+                df_var = df_var.sort_values(
+                    by=['is_standard', 'is_nan_bank', 'bank_len', 'bank'], 
+                    ascending=[False, True, True, True]
+                )
                 
                 if "NAMA BANK" in opsi_duplikat:
                     df_var = df_var.drop_duplicates(subset=['country', 'bank'], keep='first')
                 
                 elif "NILAI DATA" in opsi_duplikat:
-                    # Amankan baris yang masih kosong melompong (semua NaN) agar tidak terhapus
                     has_data = df_var[year_cols_in_df].notna().any(axis=1)
                     df_with_data = df_var[has_data]
                     df_no_data = df_var[~has_data]
                     
-                    # Hapus duplikat nilai data lintas negara
+                    # Hapus duplikat secara radikal tanpa memedulikan nama negara (Silang-Negara)
                     df_with_data = df_with_data.drop_duplicates(subset=year_cols_in_df, keep='first')
                     
-                    # Satukan kembali
                     df_var = pd.concat([df_with_data, df_no_data], ignore_index=True)
                 
-                df_var = df_var.drop(columns=['is_standard', 'bank_len'])
+                df_var = df_var.drop(columns=['is_standard', 'is_nan_bank', 'bank_len'])
                 
                 # Ubah format menyamping menjadi memanjang (Long/Panel Data)
                 df_long = pd.melt(df_var, id_vars=['country', 'bank'], value_vars=year_cols_in_df, var_name='year', value_name=var_name)
