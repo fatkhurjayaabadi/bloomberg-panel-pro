@@ -11,7 +11,6 @@ st.set_page_config(page_title="Bloomberg Panel Pro", page_icon="💠", layout="w
 
 st.markdown("""
     <style>
-        /* Desain Header Premium */
         .premium-title {
             background: linear-gradient(90deg, #0f2027, #203a43, #2c5364);
             -webkit-background-clip: text;
@@ -30,7 +29,6 @@ st.markdown("""
             margin-bottom: 40px;
             letter-spacing: 0.5px;
         }
-        /* Desain Tombol Aksi */
         .stButton>button {
             background: linear-gradient(135deg, #1e88e5 0%, #1565c0 100%);
             color: white;
@@ -47,7 +45,6 @@ st.markdown("""
             box-shadow: 0 6px 20px rgba(30, 136, 229, 0.5);
             color: white;
         }
-        /* Kartu Metrik */
         div[data-testid="metric-container"] {
             background-color: #ffffff;
             border: 1px solid #e0e0e0;
@@ -62,7 +59,7 @@ st.markdown("<div class='premium-title'>Bloomberg Panel Data Engine</div>", unsa
 st.markdown("<div class='premium-subtitle'>Ekstraksi Otomatis, Penyelarasan, & Penggabungan Ratusan File Excel</div>", unsafe_allow_html=True)
 
 # ==========================================
-# 2. KAMUS NEGARA GLOBAL & PELACAK TICKER
+# 2. KAMUS NEGARA GLOBAL
 # ==========================================
 country_map = {
     'IJ': 'INDONESIA', 'MK': 'MALAYSIA', 'SP': 'SINGAPORE', 'TB': 'THAILAND',
@@ -104,7 +101,7 @@ def get_country_code(ticker):
     return "UNKNOWN"
 
 # ==========================================
-# 3. SIDEBAR (PENGATURAN LANJUTAN)
+# 3. SIDEBAR PENGATURAN
 # ==========================================
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/000000/dashboard-layout.png", width=60)
@@ -123,14 +120,14 @@ with st.sidebar:
                 "Hapus jika NAMA BANK persis sama",
                 "Hapus jika NILAI DATA sama persis (Beda nama bank tidak apa-apa)"
             ],
-            help="Opsi ke-3 akan mencari bank di negara yang sama yang memiliki deretan angka laporan keuangan identik dari tahun awal s/d akhir."
+            help="Opsi ke-3 akan mencari bank di negara yang sama yang memiliki deretan angka keuangan identik dari tahun awal s/d akhir."
         )
 
     with st.expander("⚖️ Struktur Data Stata", expanded=True):
         opsi_panel = st.radio(
             "Kaidah Panel:",
             ["Unbalanced (Aman & Fleksibel)", "Balanced (Sangat Ketat)"],
-            help="Balanced akan membuang bank sepenuhnya jika ada 1 variabel saja yang kosong (NaN) di tahun tertentu."
+            help="Balanced akan membuang bank sepenuhnya jika ada 1 variabel yang kosong di tahun tertentu."
         )
 
 # ==========================================
@@ -156,8 +153,8 @@ if mulai_proses:
     if not uploaded_files:
         st.warning("⚠️ Silakan unggah minimal 1 file Excel terlebih dahulu pada kotak di atas.")
     else:
-        all_processed_dfs = []
-        variabel_list = []
+        # Menggunakan Dictionary untuk menampung file dengan variabel yang sama
+        dict_variabel_dfs = {}
         
         with st.status("🛠️ Membedah, Membersihkan, dan Menyatukan File...", expanded=True) as status:
             progress_bar = st.progress(0)
@@ -175,14 +172,6 @@ if mulai_proses:
                 clean_var_name = re.sub(r'[^a-zA-Z0-9_]', '_', raw_var_name).lower()
                 clean_var_name = re.sub(r'_+', '_', clean_var_name).strip('_')
                 
-                # Anti-Variabel Kembar
-                original_var_name = clean_var_name
-                counter = 1
-                while clean_var_name in variabel_list:
-                    clean_var_name = f"{original_var_name}_{counter}"
-                    counter += 1
-                variabel_list.append(clean_var_name)
-                
                 # Pembersihan Baris & Ekstraksi Negara
                 df = df.drop([0, 1]).reset_index(drop=True)
                 df['country_code'] = df['Ticker'].apply(get_country_code)
@@ -192,44 +181,50 @@ if mulai_proses:
                 df['bank'] = df['bank'].astype(str).str.strip().str.upper()
                 df['country'] = df['country'].astype(str).str.strip().str.upper()
                 
-                # Filter Tahun Valid
                 valid_year_cols = [col for col in year_cols if start_year <= int(str(col).split(":")[1][:4]) <= end_year]
                 for col in valid_year_cols:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
                 
-                # ==========================================
-                # FITUR BARU: PENGHAPUSAN DUPLIKAT
-                # ==========================================
                 if "NAMA BANK" in opsi_duplikat:
-                    # Menghapus jika di negara yang sama ada nama bank yang persis sama
                     df = df.drop_duplicates(subset=['country', 'bank'], keep='first')
-                
                 elif "NILAI DATA" in opsi_duplikat:
-                    # Menghapus jika di negara yang sama, nilai data dari tahun A-Z persis sama
                     df = df.drop_duplicates(subset=['country'] + valid_year_cols, keep='first')
                 
-                # Proses Wide to Long (Melting)
+                # Wide to Long (Melting)
                 df_long = pd.melt(df, id_vars=['country', 'bank'], value_vars=valid_year_cols, var_name='year_raw', value_name=clean_var_name)
                 df_long['year'] = df_long['year_raw'].apply(lambda x: int(str(x).split(":")[1][:4]))
                 df_long = df_long[['country', 'bank', 'year', clean_var_name]]
-                
-                # Pastikan tidak ada duplikat mutlak setelah melt
                 df_long = df_long.drop_duplicates(subset=['country', 'bank', 'year'])
-                all_processed_dfs.append(df_long)
+                
+                # Masukkan ke dalam dictionary berdasarkan nama variabelnya
+                if clean_var_name not in dict_variabel_dfs:
+                    dict_variabel_dfs[clean_var_name] = []
+                dict_variabel_dfs[clean_var_name].append(df_long)
                 
                 progress_bar.progress((i + 1) / len(uploaded_files))
             
-            st.caption("🔄 Menggabungkan semua variabel menjadi Master Database...")
+            st.caption("🔄 Menggabungkan data yang bervariabel sama dan menyusun Master Database...")
             
-            if all_processed_dfs:
-                # Menggabungkan seluruh dataframe
+            if dict_variabel_dfs:
+                # 1. Tumpuk baris (Concat) untuk file yang memiliki nama variabel sama
+                all_processed_dfs = []
+                variabel_list = list(dict_variabel_dfs.keys())
+                
+                for var_name, list_dfs in dict_variabel_dfs.items():
+                    # Menyatukan data ke bawah jika variabel sama
+                    df_var_gabungan = pd.concat(list_dfs, ignore_index=True)
+                    # Menghapus tumpang tindih data jika ada bank yang sama terekam 2x di file berbeda
+                    df_var_gabungan = df_var_gabungan.drop_duplicates(subset=['country', 'bank', 'year'], keep='first')
+                    all_processed_dfs.append(df_var_gabungan)
+                
+                # 2. Gabung menyamping (Merge) antar variabel yang berbeda
                 df_master = reduce(lambda left, right: pd.merge(left, right, on=['country', 'bank', 'year'], how='outer'), all_processed_dfs)
                 
-                # Penerapan Aturan Balanced Panel
+                # 3. Penerapan Aturan Balanced Panel
                 if "Balanced" in opsi_panel:
                     df_master = df_master.dropna(subset=variabel_list)
                     
-                # Pengurutan Rapi & Pembuatan ID Stata
+                # 4. Pengurutan Rapi & Pembuatan ID Stata
                 df_master = df_master.sort_values(by=['country', 'bank', 'year']).reset_index(drop=True)
                 df_master['country_id'] = df_master.groupby('country').ngroup() + 1
                 df_master['bank_id'] = df_master.groupby('bank').ngroup() + 1
@@ -241,11 +236,11 @@ if mulai_proses:
                 st.toast('Selesai Diproses!', icon='🔥')
                 
                 # ==========================================
-                # 6. DASHBOARD HASIL (KARTU METRIK & TABEL)
+                # 6. DASHBOARD HASIL
                 # ==========================================
                 st.write("### 📊 Ringkasan Dataset Akhir")
                 m1, m2, m3, m4 = st.columns(4)
-                m1.metric("📌 Total Variabel", len(variabel_list))
+                m1.metric("📌 Total Kolom Variabel", len(variabel_list))
                 m2.metric("🌍 Total Negara", df_master['country'].nunique())
                 m3.metric("🏦 Bank Terdaftar", f"{df_master['bank'].nunique():,}")
                 m4.metric("📈 Baris Observasi", f"{len(df_master):,}")
