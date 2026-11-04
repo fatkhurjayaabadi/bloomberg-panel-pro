@@ -5,48 +5,64 @@ import re
 from functools import reduce
 
 # ==========================================
-# 1. PENGATURAN HALAMAN & CSS KUSTOM
+# 1. PENGATURAN HALAMAN & CSS PREMIUM
 # ==========================================
-st.set_page_config(page_title="Bloomberg Panel Pro", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Bloomberg Panel Pro", page_icon="💠", layout="wide")
 
-# CSS untuk mempercantik UI (Warna Gradient, Tombol Melengkung, dll)
 st.markdown("""
     <style>
-        /* Mengubah font judul menjadi gradient */
-        .title-gradient {
-            background: -webkit-linear-gradient(45deg, #1E88E5, #42A5F5, #004D40);
+        /* Desain Header Premium */
+        .premium-title {
+            background: linear-gradient(90deg, #0f2027, #203a43, #2c5364);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            font-size: 42px;
-            font-weight: 800;
+            font-size: 48px;
+            font-weight: 900;
             text-align: center;
-            margin-bottom: 5px;
+            letter-spacing: -1px;
+            margin-bottom: 0px;
         }
-        .subtitle {
+        .premium-subtitle {
             text-align: center;
-            color: #6c757d;
+            color: #546e7a;
             font-size: 18px;
-            margin-bottom: 30px;
+            font-weight: 500;
+            margin-bottom: 40px;
+            letter-spacing: 0.5px;
         }
-        /* Mempercantik tombol */
+        /* Desain Tombol Aksi */
         .stButton>button {
-            border-radius: 8px;
-            font-size: 16px;
+            background: linear-gradient(135deg, #1e88e5 0%, #1565c0 100%);
+            color: white;
+            border-radius: 12px;
+            border: none;
+            padding: 10px 24px;
+            font-size: 18px;
             font-weight: bold;
-            transition: 0.3s;
+            box-shadow: 0 4px 15px rgba(30, 136, 229, 0.3);
+            transition: all 0.3s ease;
         }
         .stButton>button:hover {
-            transform: scale(1.02);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(30, 136, 229, 0.5);
+            color: white;
+        }
+        /* Kartu Metrik */
+        div[data-testid="metric-container"] {
+            background-color: #ffffff;
+            border: 1px solid #e0e0e0;
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
         }
     </style>
 """, unsafe_allow_html=True)
 
-# Header Aplikasi
-st.markdown("<div class='title-gradient'>Bloomberg Panel Builder Pro</div>", unsafe_allow_html=True)
-st.markdown("<div class='subtitle'>Ekstraksi Otomatis & Penggabungan Ratusan File Excel ke Master Data Stata</div>", unsafe_allow_html=True)
+st.markdown("<div class='premium-title'>Bloomberg Panel Data Engine</div>", unsafe_allow_html=True)
+st.markdown("<div class='premium-subtitle'>Ekstraksi Otomatis, Penyelarasan, & Penggabungan Ratusan File Excel</div>", unsafe_allow_html=True)
 
 # ==========================================
-# 2. KAMUS NEGARA & FUNGSI PELACAK
+# 2. KAMUS NEGARA GLOBAL & PELACAK TICKER
 # ==========================================
 country_map = {
     'IJ': 'INDONESIA', 'MK': 'MALAYSIA', 'SP': 'SINGAPORE', 'TB': 'THAILAND',
@@ -84,83 +100,82 @@ country_map = {
 def get_country_code(ticker):
     parts = str(ticker).split()
     if len(parts) >= 2:
-        if parts[-1].upper() == 'EQUITY':
-            return parts[-2].upper()
-        else:
-            return parts[-1].upper()
+        return parts[-2].upper() if parts[-1].upper() == 'EQUITY' else parts[-1].upper()
     return "UNKNOWN"
 
 # ==========================================
-# 3. SIDEBAR (MENU PENGATURAN)
+# 3. SIDEBAR (PENGATURAN LANJUTAN)
 # ==========================================
 with st.sidebar:
-    st.image("https://img.icons8.com/color/96/000000/settings.png", width=50)
-    st.write("## ⚙️ Pengaturan Panel")
+    st.image("https://img.icons8.com/color/96/000000/dashboard-layout.png", width=60)
+    st.write("### ⚙️ Parameter Analisis")
     
-    st.write("---")
-    st.write("🗓️ **Rentang Tahun**")
-    col_yr1, col_yr2 = st.columns(2)
-    with col_yr1:
-        start_year = st.number_input("Dari", value=2015, step=1)
-    with col_yr2:
-        end_year = st.number_input("Sampai", value=2025, step=1)
-    
-    st.write("---")
-    st.write("⚖️ **Kaidah Data (Stata)**")
-    opsi_panel = st.radio(
-        "Pilih Format Panel:",
-        ["Unbalanced (Biarkan baris kosong/NaN)", 
-         "Balanced (Hapus bank jika ada 1 nilai kosong)"],
-        label_visibility="collapsed"
-    )
-    
-    st.write("---")
-    st.info("💡 **Tips:** Seret semua file Excel sekaligus ke area unggah di layar utama.")
+    with st.expander("🗓️ Rentang Waktu", expanded=True):
+        col1, col2 = st.columns(2)
+        start_year = col1.number_input("Dari Tahun", value=2015, step=1)
+        end_year = col2.number_input("S/d Tahun", value=2025, step=1)
+
+    with st.expander("🛡️ Penanganan Duplikat", expanded=True):
+        opsi_duplikat = st.radio(
+            "Pilih metode penyaringan:",
+            [
+                "Jangan hapus (Biarkan semua)", 
+                "Hapus jika NAMA BANK persis sama",
+                "Hapus jika NILAI DATA sama persis (Beda nama bank tidak apa-apa)"
+            ],
+            help="Opsi ke-3 akan mencari bank di negara yang sama yang memiliki deretan angka laporan keuangan identik dari tahun awal s/d akhir."
+        )
+
+    with st.expander("⚖️ Struktur Data Stata", expanded=True):
+        opsi_panel = st.radio(
+            "Kaidah Panel:",
+            ["Unbalanced (Aman & Fleksibel)", "Balanced (Sangat Ketat)"],
+            help="Balanced akan membuang bank sepenuhnya jika ada 1 variabel saja yang kosong (NaN) di tahun tertentu."
+        )
 
 # ==========================================
-# 4. AREA KERJA UTAMA (DRAG & DROP)
+# 4. AREA KERJA UTAMA
 # ==========================================
-# Kotak unggah file yang lebar
 uploaded_files = st.file_uploader(
-    "📤 Unggah seluruh file Excel mentah (grid1_xxx.xlsx) Anda di sini...", 
+    "📥 Seret dan Lepas (Drag & Drop) seluruh file Excel Bloomberg (grid1_xxx.xlsx) Anda di sini", 
     type=["xlsx"], 
     accept_multiple_files=True
 )
 
 st.markdown("<br>", unsafe_allow_html=True)
-col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
-with col_btn2:
-    mulai_proses = st.button("🚀 MULAI PROSES PENGGABUNGAN DATA", use_container_width=True, type="primary")
+col_spacer1, col_btn, col_spacer2 = st.columns([1, 2, 1])
+with col_btn:
+    mulai_proses = st.button("🚀 COMPILE & MERGE MASTER DATA", use_container_width=True)
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
 # ==========================================
-# 5. LOGIKA PEMROSESAN & TAMPILAN HASIL
+# 5. MESIN PEMROSESAN
 # ==========================================
 if mulai_proses:
     if not uploaded_files:
-        st.warning("⚠️ Mohon unggah setidaknya satu file Excel terlebih dahulu.")
+        st.warning("⚠️ Silakan unggah minimal 1 file Excel terlebih dahulu pada kotak di atas.")
     else:
         all_processed_dfs = []
         variabel_list = []
         
-        # Animasi status yang modern
-        with st.status("🛠️ Membedah dan Menyatukan File Excel...", expanded=True) as status:
-            
+        with st.status("🛠️ Membedah, Membersihkan, dan Menyatukan File...", expanded=True) as status:
             progress_bar = st.progress(0)
             
             for i, file in enumerate(uploaded_files):
-                st.write(f"Menganalisis file: `{file.name}`")
+                st.caption(f"Menganalisis: `{file.name}`")
                 df = pd.read_excel(file, engine='openpyxl')
                 year_cols = [col for col in df.columns if ":" in str(col)]
                 
                 if not year_cols:
                     continue
                     
+                # Ekstraksi Nama Variabel
                 raw_var_name = str(year_cols[0]).split(":")[0].strip()
                 clean_var_name = re.sub(r'[^a-zA-Z0-9_]', '_', raw_var_name).lower()
                 clean_var_name = re.sub(r'_+', '_', clean_var_name).strip('_')
                 
+                # Anti-Variabel Kembar
                 original_var_name = clean_var_name
                 counter = 1
                 while clean_var_name in variabel_list:
@@ -168,8 +183,8 @@ if mulai_proses:
                     counter += 1
                 variabel_list.append(clean_var_name)
                 
+                # Pembersihan Baris & Ekstraksi Negara
                 df = df.drop([0, 1]).reset_index(drop=True)
-                
                 df['country_code'] = df['Ticker'].apply(get_country_code)
                 df['country'] = df['country_code'].map(country_map).fillna(df['country_code'])
                 df = df.rename(columns={'Name': 'bank'})
@@ -177,73 +192,81 @@ if mulai_proses:
                 df['bank'] = df['bank'].astype(str).str.strip().str.upper()
                 df['country'] = df['country'].astype(str).str.strip().str.upper()
                 
+                # Filter Tahun Valid
                 valid_year_cols = [col for col in year_cols if start_year <= int(str(col).split(":")[1][:4]) <= end_year]
-                
                 for col in valid_year_cols:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
-                    
+                
+                # ==========================================
+                # FITUR BARU: PENGHAPUSAN DUPLIKAT
+                # ==========================================
+                if "NAMA BANK" in opsi_duplikat:
+                    # Menghapus jika di negara yang sama ada nama bank yang persis sama
+                    df = df.drop_duplicates(subset=['country', 'bank'], keep='first')
+                
+                elif "NILAI DATA" in opsi_duplikat:
+                    # Menghapus jika di negara yang sama, nilai data dari tahun A-Z persis sama
+                    df = df.drop_duplicates(subset=['country'] + valid_year_cols, keep='first')
+                
+                # Proses Wide to Long (Melting)
                 df_long = pd.melt(df, id_vars=['country', 'bank'], value_vars=valid_year_cols, var_name='year_raw', value_name=clean_var_name)
                 df_long['year'] = df_long['year_raw'].apply(lambda x: int(str(x).split(":")[1][:4]))
                 df_long = df_long[['country', 'bank', 'year', clean_var_name]]
                 
+                # Pastikan tidak ada duplikat mutlak setelah melt
                 df_long = df_long.drop_duplicates(subset=['country', 'bank', 'year'])
                 all_processed_dfs.append(df_long)
                 
-                # Update progress bar
                 progress_bar.progress((i + 1) / len(uploaded_files))
             
-            st.write("🔄 Menggabungkan semua variabel menjadi Master Data...")
+            st.caption("🔄 Menggabungkan semua variabel menjadi Master Database...")
             
             if all_processed_dfs:
+                # Menggabungkan seluruh dataframe
                 df_master = reduce(lambda left, right: pd.merge(left, right, on=['country', 'bank', 'year'], how='outer'), all_processed_dfs)
                 
+                # Penerapan Aturan Balanced Panel
                 if "Balanced" in opsi_panel:
                     df_master = df_master.dropna(subset=variabel_list)
                     
+                # Pengurutan Rapi & Pembuatan ID Stata
                 df_master = df_master.sort_values(by=['country', 'bank', 'year']).reset_index(drop=True)
-                
                 df_master['country_id'] = df_master.groupby('country').ngroup() + 1
                 df_master['bank_id'] = df_master.groupby('bank').ngroup() + 1
                 
                 kolom_awal = ['country_id', 'bank_id', 'country', 'bank', 'year']
                 df_master = df_master[kolom_awal + variabel_list]
                 
-                status.update(label="✅ Data Berhasil Disatukan!", state="complete", expanded=False)
-                
-                # Munculkan pop-up sukses sebentar di pojok kanan bawah
-                st.toast('Proses Selesai!', icon='🎉')
+                status.update(label="✅ Berhasil: Master Data Stata Siap!", state="complete", expanded=False)
+                st.toast('Selesai Diproses!', icon='🔥')
                 
                 # ==========================================
-                # 6. DASHBOARD HASIL (METRIK & TABEL)
+                # 6. DASHBOARD HASIL (KARTU METRIK & TABEL)
                 # ==========================================
-                st.write("### 📊 Ringkasan Dataset")
+                st.write("### 📊 Ringkasan Dataset Akhir")
                 m1, m2, m3, m4 = st.columns(4)
-                with m1:
-                    st.metric("Total Variabel", len(variabel_list))
-                with m2:
-                    st.metric("Total Negara", df_master['country'].nunique())
-                with m3:
-                    st.metric("Total Bank Unik", df_master['bank'].nunique())
-                with m4:
-                    st.metric("Baris Observasi", f"{len(df_master):,}")
+                m1.metric("📌 Total Variabel", len(variabel_list))
+                m2.metric("🌍 Total Negara", df_master['country'].nunique())
+                m3.metric("🏦 Bank Terdaftar", f"{df_master['bank'].nunique():,}")
+                m4.metric("📈 Baris Observasi", f"{len(df_master):,}")
                 
-                # Menampilkan tabel dengan gaya yang rapi
-                st.dataframe(df_master, use_container_width=True, height=350)
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.dataframe(df_master, use_container_width=True, height=400)
                 
-                # Tombol Download (Lebar & Menonjol)
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df_master.to_excel(writer, index=False, sheet_name='Data_Panel_Stata')
+                    df_master.to_excel(writer, index=False, sheet_name='Master_Data_Stata')
                     
                 st.markdown("<br>", unsafe_allow_html=True)
-                st.download_button(
-                    label="📥 UNDUH MASTER DATA STATA (.xlsx)",
-                    data=output.getvalue(),
-                    file_name=f"Master_Panel_Data_{start_year}_{end_year}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                    type="primary"
-                )
+                c1, c2, c3 = st.columns([1,2,1])
+                with c2:
+                    st.download_button(
+                        label="📥 UNDUH MASTER DATA (.xlsx)",
+                        data=output.getvalue(),
+                        file_name=f"Master_Panel_Data_{start_year}_{end_year}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
             else:
-                status.update(label="❌ Gagal mengekstrak data", state="error", expanded=True)
-                st.error("Pastikan file yang diunggah memiliki format yang benar.")
+                status.update(label="❌ Terjadi Kesalahan Ekstraksi", state="error", expanded=True)
+                st.error("Tidak ada data yang berhasil diekstrak. Periksa format file Anda.")
