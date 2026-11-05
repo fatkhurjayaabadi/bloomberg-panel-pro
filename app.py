@@ -57,7 +57,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("<div class='premium-title'>Bloomberg Panel Engine</div>", unsafe_allow_html=True)
-st.markdown("<div class='premium-subtitle'>Mendeteksi Otomatis, Menghapus Duplikat Lintas Negara, & Membangun Stata Panel Utuh</div>", unsafe_allow_html=True)
+st.markdown("<div class='premium-subtitle'>Ekstraksi Otomatis, Pemaksaan Target Negara, & Penghapus Duplikat Cerdas</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 2. KAMUS NEGARA GLOBAL
@@ -110,8 +110,31 @@ with st.sidebar:
         start_year = col1.number_input("Dari", value=2015, step=1)
         end_year = col2.number_input("Sampai", value=2026, step=1)
 
-    with st.expander("🌍 Koreksi Sandi Negara", expanded=True):
-        custom_map_str = st.text_area("Format: KODE=NEGARA", value="EO=OMAN,\nEU=OMAN,\nEP=OMAN,\nEZ=OMAN,\nB3=OMAN,\nL1=OMAN,\nL3=OMAN,\nLI=OMAN,\nS2=OMAN")
+    # 🚀 FITUR BARU: PEMAKSAAN & FILTER NEGARA
+    with st.expander("🌍 Target & Koreksi Negara (PENTING)", expanded=True):
+        opsi_negara = st.radio(
+            "Tindakan untuk Ticker Nyasar/Asing:",
+            [
+                "1. Otomatis (Deteksi dari Ticker)",
+                "2. PAKSA 1 NEGARA (Ubah SEMUA jadi 1 negara)",
+                "3. FILTER NEGARA (Hapus negara di luar target)"
+            ],
+            help="Pilih opsi 2 jika file yang diunggah hanya untuk 1 negara (misal Oman). Maka ticker nyasar ke Jerman/Inggris akan otomatis dipaksa menjadi Oman."
+        )
+        
+        if "PAKSA" in opsi_negara:
+            negara_paksaan = st.selectbox("Ubah semua bank di file menjadi negara:", sorted(list(set(country_map.values()))), index=sorted(list(set(country_map.values()))).index("OMAN") if "OMAN" in country_map.values() else 0)
+            negara_pilihan = []
+        elif "FILTER" in opsi_negara:
+            negara_pilihan = st.multiselect("Hanya pertahankan data dari negara:", sorted(list(set(country_map.values()))), default=["OMAN", "LEBANON"])
+            negara_paksaan = None
+        else:
+            negara_paksaan = None
+            negara_pilihan = []
+
+        st.write("---")
+        st.caption("🔧 Koreksi Sandi Manual Khusus")
+        custom_map_str = st.text_area("Format: KODE_BURSA=NEGARA_BENAR", value="EO=OMAN,\nEU=OMAN,\nEP=OMAN,\nEZ=OMAN,\nB3=OMAN,\nL1=OMAN,\nL3=OMAN,\nLI=OMAN,\nS2=OMAN")
 
     with st.expander("🛡️ Kecerdasan Pembersih Duplikat", expanded=True):
         opsi_duplikat = st.radio(
@@ -122,7 +145,7 @@ with st.sidebar:
                 "Hapus jika NILAI DATA sama (Silang Negara)"
             ],
             index=2,
-            help="Menghapus duplikat dan memaksa nama bank kosong terhapus."
+            help="Menghapus duplikat kembar dan menendang baris yang nama bank-nya kosong."
         )
 
     with st.expander("⚖️ Desain Tabel Stata", expanded=True):
@@ -131,6 +154,7 @@ with st.sidebar:
             ["Unbalanced (Struktur Tahun Utuh, Ada Nilai Kosong)", "Balanced (Hapus Baris yang Punya Nilai Kosong)"]
         )
 
+# Memproses Kamus Manual
 custom_country_map = {}
 if custom_map_str:
     for item in custom_map_str.replace('\n', ',').split(','):
@@ -163,10 +187,10 @@ if mulai_proses:
     else:
         dict_variabel_dfs_wide = {}
         
-        with st.status("🛠️ Membedah file dan memetakan rentang tahun...", expanded=True) as status:
+        with st.status("🛠️ Membedah file dan menyelaraskan rentang tahun...", expanded=True) as status:
             progress_bar = st.progress(0)
             
-            # FITUR BARU 1: Kunci Rentang Tahun Secara Absolut
+            # Kunci Rentang Tahun Secara Absolut
             requested_years_list = list(range(start_year, end_year + 1))
             
             # TAHAP 1: Ekstraksi Data
@@ -183,11 +207,19 @@ if mulai_proses:
                 df = df.drop([0, 1]).reset_index(drop=True)
                 df['country_code'] = df['Ticker'].apply(get_country_code)
                 
+                # Pemetaan Awal
                 df['country'] = df['country_code'].map(custom_country_map).fillna(df['country_code'].map(country_map)).fillna(df['country_code'])
-                df = df.rename(columns={'Name': 'bank'})
-                
-                df['bank'] = df['bank'].astype(str).str.strip().str.upper()
                 df['country'] = df['country'].astype(str).str.strip().str.upper()
+                df['bank'] = df['bank'].astype(str).str.strip().str.upper()
+                
+                # 🚀 PENERAPAN FITUR PAKSA / FILTER NEGARA
+                if "PAKSA" in opsi_negara:
+                    df['country'] = negara_paksaan
+                elif "FILTER" in opsi_negara:
+                    if negara_pilihan:
+                        df = df[df['country'].isin(negara_pilihan)]
+                        if df.empty:
+                            continue # Lompati file ini jika tidak ada negara target di dalamnya
                 
                 valid_year_cols = [col for col in year_cols if start_year <= int(str(col).split(":")[1][:4]) <= end_year]
                 rename_dict = {col: int(str(col).split(":")[1][:4]) for col in valid_year_cols}
@@ -197,7 +229,7 @@ if mulai_proses:
                     
                 df = df.rename(columns=rename_dict)
                 
-                # Paksa sistem memunculkan semua tahun yang Anda minta, meskipun datanya kosong melompong
+                # Memastikan kolom tahun lengkap dari ujung ke ujung
                 for yr in requested_years_list:
                     if yr not in df.columns:
                         df[yr] = np.nan
@@ -210,25 +242,24 @@ if mulai_proses:
                 
                 progress_bar.progress((i + 1) / len(uploaded_files))
             
-            st.caption("🔄 Mengidentifikasi duplikat dan menyeleksi nama bank...")
+            st.caption("🔄 Menyeleksi nama bank dan menghapus duplikat...")
             
-            # TAHAP 2: Pembersihan Lintas-Negara & Perubahan Format
+            # TAHAP 2: Pembersihan & Perubahan Format
             all_processed_dfs = []
             variabel_list = list(dict_variabel_dfs_wide.keys())
             
             for var_name, list_dfs in dict_variabel_dfs_wide.items():
+                if not list_dfs:
+                    continue
                 df_var = pd.concat(list_dfs, ignore_index=True)
                 
-                # FITUR BARU 2: Logika Anti-Gagal (Cek Keabsahan Nama Bank)
                 df_var['is_standard'] = df_var['country'].str.len() > 2
-                
-                # Mendeteksi apakah nama bank kosong/spasi/NaN. Jika valid nilainya True, jika kosong nilainya False.
+                # Mendeteksi dan melempar nama bank kosong ke bawah agar terhapus
                 df_var['is_valid_bank_name'] = df_var['bank'].apply(
                     lambda x: len(str(x).strip()) >= 2 and str(x).strip().upper() not in ['NAN', 'NONE', 'NULL', 'NA']
                 )
                 df_var['bank_len'] = df_var['bank'].str.len()
                 
-                # Mengurutkan: Bank Valid di atas, Bank Kosong di bawah.
                 df_var = df_var.sort_values(
                     by=['is_standard', 'is_valid_bank_name', 'bank_len', 'bank'], 
                     ascending=[False, False, True, True]
@@ -247,10 +278,8 @@ if mulai_proses:
                 
                 df_var = df_var.drop(columns=['is_standard', 'is_valid_bank_name', 'bank_len'])
                 
-                # Ubah ke format Panjang (Stata Format)
+                # Ubah ke format Panjang (Stata Panel)
                 df_long = pd.melt(df_var, id_vars=['country', 'bank'], value_vars=requested_years_list, var_name='year', value_name=var_name)
-                
-                # FITUR BARU 3: Jangan buang data kosong (dropna) di tahap ini agar struktur tahun tetap utuh di setiap bank
                 df_long = df_long.drop_duplicates(subset=['country', 'bank', 'year'], keep='first')
                 all_processed_dfs.append(df_long)
             
@@ -260,7 +289,7 @@ if mulai_proses:
             if all_processed_dfs:
                 df_master = reduce(lambda left, right: pd.merge(left, right, on=['country', 'bank', 'year'], how='outer'), all_processed_dfs)
                 
-                if "Balanced (" in opsi_panel:
+                if "Balanced" in opsi_panel:
                     df_master = df_master.dropna(subset=variabel_list)
                     
                 df_master = df_master.sort_values(by=['country', 'bank', 'year']).reset_index(drop=True)
@@ -301,5 +330,5 @@ if mulai_proses:
                         use_container_width=True
                     )
             else:
-                status.update(label="❌ Terjadi Kesalahan Ekstraksi", state="error", expanded=True)
-                st.error("Gagal menyatukan data. Silakan periksa kembali file Excel Anda.")
+                status.update(label="❌ Terjadi Kesalahan", state="error", expanded=True)
+                st.error("Gagal menyatukan data. File mungkin kosong atau terhapus semua oleh filter negara.")
