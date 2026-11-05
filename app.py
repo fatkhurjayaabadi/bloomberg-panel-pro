@@ -12,7 +12,6 @@ st.set_page_config(page_title="Bloomberg Panel Pro", page_icon="🏛️", layout
 
 st.markdown("""
     <style>
-        /* Tipografi Elegan & Bersih */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;500;700&display=swap');
         html, body, [class*="css"]  {
             font-family: 'Inter', sans-serif;
@@ -36,7 +35,6 @@ st.markdown("""
             letter-spacing: 0.2px;
         }
         
-        /* Tombol Eksekusi Minimalis */
         .stButton>button {
             background-color: #111111;
             color: #ffffff;
@@ -56,7 +54,6 @@ st.markdown("""
             box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
         }
         
-        /* Kartu Metrik (Clean White) */
         div[data-testid="metric-container"] {
             background: #ffffff;
             border-top: 3px solid #111111;
@@ -234,7 +231,7 @@ if mulai_proses:
                 progress_bar = st.progress(0)
                 requested_years_list = list(range(start_year, end_year + 1))
                 
-                # 🚀 TAHAP 0: MEMBANGUN KAMUS NAMA BANK GLOBAL LINTAS-FILE
+                # TAHAP 0: MEMBANGUN KAMUS NAMA BANK GLOBAL LINTAS-FILE
                 st.caption("🔍 Membangun Kamus Ingatan Nama Bank...")
                 raw_data_cache = []
                 global_ticker_map = {}
@@ -244,17 +241,14 @@ if mulai_proses:
                     raw_data_cache.append((file.name, df_raw))
                     
                     if 'Ticker' in df_raw.columns and 'Name' in df_raw.columns:
-                        # Abaikan 2 baris metadata awal
                         df_temp = df_raw.iloc[2:].copy()
                         for _, row in df_temp.iterrows():
                             t = str(row['Ticker']).strip()
                             n = str(row['Name']).strip().upper()
-                            # Jika nama valid (bukan NaN/kosong)
                             if n not in ['NAN', 'NONE', 'NULL', 'NA', ''] and len(n) > 2:
                                 if t not in global_ticker_map:
                                     global_ticker_map[t] = n
                                 else:
-                                    # Simpan nama yang paling pendek (biasanya paling bersih)
                                     if len(n) < len(global_ticker_map[t]):
                                         global_ticker_map[t] = n
                 
@@ -271,19 +265,15 @@ if mulai_proses:
                     df = df.drop([0, 1]).reset_index(drop=True)
                     df['country_code'] = df['Ticker'].apply(get_country_code)
                     
-                    # Penerapan Kamus Negara
                     df['country'] = df['country_code'].map(custom_country_map).fillna(df['country_code'].map(country_map)).fillna(df['country_code'])
                     df = df.rename(columns={'Name': 'bank'})
                     
-                    # 🚀 INJEKSI NAMA BANK DARI KAMUS GLOBAL
                     df['Ticker_Clean'] = df['Ticker'].astype(str).str.strip()
                     df['bank'] = df['bank'].astype(str).str.strip().str.upper()
                     
-                    # 1. Cari bank yang kosong, lalu tembakkan ingatan dari kamus global
                     mask_kosong = df['bank'].isin(['NAN', 'NONE', 'NULL', 'NA', ''])
                     df.loc[mask_kosong, 'bank'] = df.loc[mask_kosong, 'Ticker_Clean'].map(global_ticker_map)
                     
-                    # 2. Jika di semua file memang namanya tidak ada, baru pasrah pakai Ticker
                     df['bank'] = df['bank'].fillna(df['Ticker_Clean'])
                     df['bank'] = df['bank'].astype(str).str.strip().str.upper()
                     mask_kosong_akhir = df['bank'].isin(['NAN', 'NONE', 'NULL', 'NA', ''])
@@ -291,7 +281,6 @@ if mulai_proses:
                     
                     df['country'] = df['country'].astype(str).str.strip().str.upper()
                     
-                    # Opsi Paksa/Filter
                     if "Paksa" in opsi_negara and negara_paksaan:
                         df['country'] = negara_paksaan
                     elif "Filter" in opsi_negara and negara_pilihan:
@@ -334,11 +323,21 @@ if mulai_proses:
                     df_var['is_valid_bank_name'] = df_var['bank'].apply(
                         lambda x: len(str(x).strip()) >= 2 and str(x).strip().upper() not in ['NAN', 'NONE', 'NULL', 'NA']
                     )
+                    
+                    # 🚀 FITUR BARU: MENDETEKSI KASTA NAMA (TICKER VS NAMA ASLI)
+                    # Jika nama mengandung kata " EQUITY", ia akan ditandai True. Mesin akan mengutamakan yang nilainya False.
+                    df_var['is_ticker_name'] = df_var['bank'].astype(str).str.contains(' EQUITY', case=False, na=False)
+                    
                     df_var['bank_len'] = df_var['bank'].str.len()
                     
+                    # Pengurutan:
+                    # 1. is_standard == True (Di Atas)
+                    # 2. is_valid_bank_name == True (Di Atas)
+                    # 3. is_ticker_name == False (Nama Asli Harus Di Atas Ticker)
+                    # 4. bank_len == Kecil (Nama Terpendek Di Atas)
                     df_var = df_var.sort_values(
-                        by=['is_standard', 'is_valid_bank_name', 'bank_len', 'bank'], 
-                        ascending=[False, False, True, True]
+                        by=['is_standard', 'is_valid_bank_name', 'is_ticker_name', 'bank_len', 'bank'], 
+                        ascending=[False, False, True, True, True]
                     )
                     
                     if "NAMA BANK" in opsi_duplikat:
@@ -351,7 +350,7 @@ if mulai_proses:
                         df_with_data = df_with_data.drop_duplicates(subset=requested_years_list, keep='first')
                         df_var = pd.concat([df_with_data, df_no_data], ignore_index=True)
                     
-                    df_var = df_var.drop(columns=['is_standard', 'is_valid_bank_name', 'bank_len'])
+                    df_var = df_var.drop(columns=['is_standard', 'is_valid_bank_name', 'is_ticker_name', 'bank_len'])
                     
                     df_long = pd.melt(df_var, id_vars=['country', 'bank'], value_vars=requested_years_list, var_name='year', value_name=var_name)
                     df_long = df_long.drop_duplicates(subset=['country', 'bank', 'year'], keep='first')
