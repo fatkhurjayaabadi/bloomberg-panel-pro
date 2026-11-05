@@ -169,7 +169,11 @@ with st.sidebar:
     with st.expander("⚖️ Desain Tabel Stata", expanded=True):
         opsi_panel = st.radio(
             "Format Panel Data:",
-            ["Unbalanced (Struktur Tahun Utuh, Ada Nilai Kosong)", "Balanced (Hapus Baris yang Punya Nilai Kosong)"]
+            [
+                "Unbalanced (Aman: Struktur Tahun Utuh, Ada Nilai Kosong)", 
+                "Balanced (Ketat: Hapus KESELURUHAN BANK jika ada 1 tahun yang kosong)"
+            ],
+            index=0
         )
 
 # ==========================================
@@ -220,7 +224,7 @@ if mulai_proses:
                 df['country'] = df['country_code'].map(custom_country_map).fillna(df['country_code'].map(country_map)).fillna(df['country_code'])
                 df = df.rename(columns={'Name': 'bank'})
                 
-                # FITUR BARU: Fallback ke Ticker jika nama bank kosong/NaN
+                # Fallback ke Ticker jika nama bank kosong/NaN
                 df['bank'] = df['bank'].fillna(df['Ticker'])
                 df['bank'] = df['bank'].astype(str).str.strip().str.upper()
                 
@@ -247,6 +251,7 @@ if mulai_proses:
                     
                 df = df.rename(columns=rename_dict)
                 
+                # Mengisi tahun yang hilang dengan NaN agar struktur panel seimbang di awal
                 for yr in requested_years_list:
                     if yr not in df.columns:
                         df[yr] = np.nan
@@ -272,7 +277,6 @@ if mulai_proses:
                 
                 df_var['is_standard'] = df_var['country'].str.len() > 2
                 
-                # Karena bank kosong sudah diganti Ticker di Tahap 1, baris ini hanya mengukur kepantasan nama
                 df_var['is_valid_bank_name'] = df_var['bank'].apply(
                     lambda x: len(str(x).strip()) >= 2 and str(x).strip().upper() not in ['NAN', 'NONE', 'NULL', 'NA']
                 )
@@ -307,8 +311,16 @@ if mulai_proses:
             if all_processed_dfs:
                 df_master = reduce(lambda left, right: pd.merge(left, right, on=['country', 'bank', 'year'], how='outer'), all_processed_dfs)
                 
+                # 🚀 MESIN BALANCED PANEL MUTLAK (STRICT)
                 if "Balanced" in opsi_panel:
-                    df_master = df_master.dropna(subset=variabel_list)
+                    # 1. Cari riwayat bank yang punya setidaknya 1 nilai kosong di variabel/tahun mana pun
+                    bank_cacat = df_master[df_master[variabel_list].isna().any(axis=1)][['country', 'bank']].drop_duplicates()
+                    
+                    # 2. Tendang KESELURUHAN baris dari bank yang cacat tersebut
+                    if not bank_cacat.empty:
+                        df_master = df_master.set_index(['country', 'bank'])
+                        bank_cacat_idx = bank_cacat.set_index(['country', 'bank']).index
+                        df_master = df_master[~df_master.index.isin(bank_cacat_idx)].reset_index()
                     
                 df_master = df_master.sort_values(by=['country', 'bank', 'year']).reset_index(drop=True)
                 df_master['country_id'] = df_master.groupby('country').ngroup() + 1
