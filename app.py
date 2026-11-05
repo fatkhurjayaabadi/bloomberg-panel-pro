@@ -218,14 +218,19 @@ if mulai_proses:
                 
                 # Penerapan Kamus
                 df['country'] = df['country_code'].map(custom_country_map).fillna(df['country_code'].map(country_map)).fillna(df['country_code'])
-                
-                # BARIS KOREKSI: Mencegah KeyError
                 df = df.rename(columns={'Name': 'bank'})
                 
-                df['country'] = df['country'].astype(str).str.strip().str.upper()
+                # FITUR BARU: Fallback ke Ticker jika nama bank kosong/NaN
+                df['bank'] = df['bank'].fillna(df['Ticker'])
                 df['bank'] = df['bank'].astype(str).str.strip().str.upper()
                 
-                # Penerapan Opsi Paksa/Filter
+                # Pastikan string kosong atau yang terbaca 'NAN' diganti paksa pakai Ticker
+                mask_kosong = df['bank'].isin(['NAN', 'NONE', 'NULL', 'NA', ''])
+                df.loc[mask_kosong, 'bank'] = df.loc[mask_kosong, 'Ticker'].astype(str).str.strip().str.upper()
+                
+                df['country'] = df['country'].astype(str).str.strip().str.upper()
+                
+                # Penerapan Opsi Paksa/Filter Negara
                 if "PAKSA" in opsi_negara:
                     df['country'] = negara_paksaan
                 elif "FILTER" in opsi_negara:
@@ -266,6 +271,8 @@ if mulai_proses:
                 df_var = pd.concat(list_dfs, ignore_index=True)
                 
                 df_var['is_standard'] = df_var['country'].str.len() > 2
+                
+                # Karena bank kosong sudah diganti Ticker di Tahap 1, baris ini hanya mengukur kepantasan nama
                 df_var['is_valid_bank_name'] = df_var['bank'].apply(
                     lambda x: len(str(x).strip()) >= 2 and str(x).strip().upper() not in ['NAN', 'NONE', 'NULL', 'NA']
                 )
