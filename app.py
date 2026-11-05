@@ -132,9 +132,8 @@ with st.sidebar:
             negara_paksaan = None
             negara_pilihan = []
 
-    # 🚀 FITUR BARU 1: TABEL KOREKSI INTERAKTIF
     with st.expander("🌍 Koreksi Sandi Otomatis", expanded=True):
-        st.caption("Jika kode bursa nyasar, aplikasi akan mengubahnya berdasarkan tabel ini. Anda bisa mengeklik tabel untuk menambah/mengedit secara visual.")
+        st.caption("Klik tabel di bawah untuk menambah atau mengedit kode secara interaktif.")
         
         default_corrections = pd.DataFrame({
             "Kode Asing (Ketik)": ["EO", "EU", "EP", "EZ", "B3", "L1", "L3", "LI", "S2"],
@@ -151,9 +150,8 @@ with st.sidebar:
                 if k and v:
                     custom_country_map[k] = v
 
-    # 🚀 FITUR BARU 2: BUKU SAKU REFERENSI KODE BLOOMBERG
     with st.expander("📚 Buku Saku Kode Bloomberg", expanded=False):
-        st.caption("Gunakan tabel ini untuk mencari kode sandi standar dari berbagai negara.")
+        st.caption("Cari kode sandi standar dari berbagai negara.")
         df_kamus = pd.DataFrame(list(country_map.items()), columns=["KODE", "NAMA NEGARA"])
         st.dataframe(df_kamus, hide_index=True, use_container_width=True, height=250)
 
@@ -218,8 +216,12 @@ if mulai_proses:
                 df = df.drop([0, 1]).reset_index(drop=True)
                 df['country_code'] = df['Ticker'].apply(get_country_code)
                 
-                # Penerapan Kamus Kustom (Dari Tabel Interaktif) -> Kamus Asli Bloomberg
+                # Penerapan Kamus
                 df['country'] = df['country_code'].map(custom_country_map).fillna(df['country_code'].map(country_map)).fillna(df['country_code'])
+                
+                # BARIS KOREKSI: Mencegah KeyError
+                df = df.rename(columns={'Name': 'bank'})
+                
                 df['country'] = df['country'].astype(str).str.strip().str.upper()
                 df['bank'] = df['bank'].astype(str).str.strip().str.upper()
                 
