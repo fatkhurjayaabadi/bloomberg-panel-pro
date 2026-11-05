@@ -108,7 +108,8 @@ with st.sidebar:
     with st.expander("🗓️ Tentukan Rentang Tahun", expanded=True):
         col1, col2 = st.columns(2)
         start_year = col1.number_input("Dari", value=2015, step=1)
-        end_year = col2.number_input("Sampai", value=2026, step=1)
+        # 🚀 DEFAULT DIUBAH KE 2023 AGAR AMAN
+        end_year = col2.number_input("Sampai", value=2023, step=1) 
 
     with st.expander("🎯 Target & Filter Negara", expanded=True):
         opsi_negara = st.radio(
@@ -220,21 +221,17 @@ if mulai_proses:
                 df = df.drop([0, 1]).reset_index(drop=True)
                 df['country_code'] = df['Ticker'].apply(get_country_code)
                 
-                # Penerapan Kamus
                 df['country'] = df['country_code'].map(custom_country_map).fillna(df['country_code'].map(country_map)).fillna(df['country_code'])
                 df = df.rename(columns={'Name': 'bank'})
                 
-                # Fallback ke Ticker jika nama bank kosong/NaN
                 df['bank'] = df['bank'].fillna(df['Ticker'])
                 df['bank'] = df['bank'].astype(str).str.strip().str.upper()
                 
-                # Pastikan string kosong atau yang terbaca 'NAN' diganti paksa pakai Ticker
                 mask_kosong = df['bank'].isin(['NAN', 'NONE', 'NULL', 'NA', ''])
                 df.loc[mask_kosong, 'bank'] = df.loc[mask_kosong, 'Ticker'].astype(str).str.strip().str.upper()
                 
                 df['country'] = df['country'].astype(str).str.strip().str.upper()
                 
-                # Penerapan Opsi Paksa/Filter Negara
                 if "PAKSA" in opsi_negara:
                     df['country'] = negara_paksaan
                 elif "FILTER" in opsi_negara:
@@ -251,7 +248,6 @@ if mulai_proses:
                     
                 df = df.rename(columns=rename_dict)
                 
-                # Mengisi tahun yang hilang dengan NaN agar struktur panel seimbang di awal
                 for yr in requested_years_list:
                     if yr not in df.columns:
                         df[yr] = np.nan
@@ -300,7 +296,6 @@ if mulai_proses:
                 
                 df_var = df_var.drop(columns=['is_standard', 'is_valid_bank_name', 'bank_len'])
                 
-                # Ubah ke format Panjang (Stata Panel)
                 df_long = pd.melt(df_var, id_vars=['country', 'bank'], value_vars=requested_years_list, var_name='year', value_name=var_name)
                 df_long = df_long.drop_duplicates(subset=['country', 'bank', 'year'], keep='first')
                 all_processed_dfs.append(df_long)
@@ -311,54 +306,54 @@ if mulai_proses:
             if all_processed_dfs:
                 df_master = reduce(lambda left, right: pd.merge(left, right, on=['country', 'bank', 'year'], how='outer'), all_processed_dfs)
                 
-                # 🚀 MESIN BALANCED PANEL MUTLAK (STRICT)
                 if "Balanced" in opsi_panel:
-                    # 1. Cari riwayat bank yang punya setidaknya 1 nilai kosong di variabel/tahun mana pun
                     bank_cacat = df_master[df_master[variabel_list].isna().any(axis=1)][['country', 'bank']].drop_duplicates()
                     
-                    # 2. Tendang KESELURUHAN baris dari bank yang cacat tersebut
                     if not bank_cacat.empty:
                         df_master = df_master.set_index(['country', 'bank'])
                         bank_cacat_idx = bank_cacat.set_index(['country', 'bank']).index
                         df_master = df_master[~df_master.index.isin(bank_cacat_idx)].reset_index()
+                
+                # 🚀 SISTEM PERINGATAN DINI (ANTI-BINGUNG)
+                if df_master.empty:
+                    status.update(label="❌ Kesalahan Logika Rentang Tahun", state="error", expanded=True)
+                    st.error("🚨 KOSONG TOTAL: Mode 'Balanced' menghapus semua bank karena tidak ada satupun bank yang datanya penuh dari awal sampai akhir.\n\n**Penyebab:** Anda meminta rentang tahun yang lebih panjang (misal 2026) dari ketersediaan isi data di file Excel Anda (misal hanya 2023).\n\n**Solusi:** Turunkan angka 'Sampai Tahun' di menu samping, atau gunakan mode Unbalanced.")
+                else:
+                    df_master = df_master.sort_values(by=['country', 'bank', 'year']).reset_index(drop=True)
+                    df_master['country_id'] = df_master.groupby('country').ngroup() + 1
+                    df_master['bank_id'] = df_master.groupby('bank').ngroup() + 1
                     
-                df_master = df_master.sort_values(by=['country', 'bank', 'year']).reset_index(drop=True)
-                df_master['country_id'] = df_master.groupby('country').ngroup() + 1
-                df_master['bank_id'] = df_master.groupby('bank').ngroup() + 1
-                
-                kolom_awal = ['country_id', 'bank_id', 'country', 'bank', 'year']
-                df_master = df_master[kolom_awal + variabel_list]
-                
-                status.update(label="✅ Selesai: Master Data Panel Berhasil Dirakit!", state="complete", expanded=False)
-                st.balloons()
-                
-                # ==========================================
-                # 6. DASHBOARD HASIL & TOMBOL UNDUH
-                # ==========================================
-                st.write("### 📊 Parameter Statistik Akhir")
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("📌 Total Variabel", len(variabel_list))
-                m2.metric("🌍 Zona Negara", df_master['country'].nunique())
-                m3.metric("🏦 Bank Terdaftar", f"{df_master['bank'].nunique():,}")
-                m4.metric("📈 Total Baris", f"{len(df_master):,}")
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.dataframe(df_master, use_container_width=True, hide_index=True, height=400)
-                
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df_master.to_excel(writer, index=False, sheet_name='Master_Data_Stata')
+                    kolom_awal = ['country_id', 'bank_id', 'country', 'bank', 'year']
+                    df_master = df_master[kolom_awal + variabel_list]
                     
-                st.markdown("<br>", unsafe_allow_html=True)
-                c1, c2, c3 = st.columns([1,2,1])
-                with c2:
-                    st.download_button(
-                        label="📥 EXPORT MASTER DATA (.xlsx)",
-                        data=output.getvalue(),
-                        file_name=f"Master_Stata_Final_{start_year}_{end_year}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
+                    status.update(label="✅ Selesai: Master Data Panel Berhasil Dirakit!", state="complete", expanded=False)
+                    st.balloons()
+                    
+                    # DASHBOARD HASIL & TOMBOL UNDUH
+                    st.write("### 📊 Parameter Statistik Akhir")
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("📌 Total Variabel", len(variabel_list))
+                    m2.metric("🌍 Zona Negara", df_master['country'].nunique())
+                    m3.metric("🏦 Bank Terdaftar", f"{df_master['bank'].nunique():,}")
+                    m4.metric("📈 Total Baris", f"{len(df_master):,}")
+                    
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.dataframe(df_master, use_container_width=True, hide_index=True, height=400)
+                    
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df_master.to_excel(writer, index=False, sheet_name='Master_Data_Stata')
+                        
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    c1, c2, c3 = st.columns([1,2,1])
+                    with c2:
+                        st.download_button(
+                            label="📥 EXPORT MASTER DATA (.xlsx)",
+                            data=output.getvalue(),
+                            file_name=f"Master_Stata_Final_{start_year}_{end_year}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
             else:
                 status.update(label="❌ Terjadi Kesalahan", state="error", expanded=True)
                 st.error("Gagal menyatukan data. File mungkin kosong atau terhapus semua oleh filter negara.")
