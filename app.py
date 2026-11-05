@@ -75,7 +75,6 @@ st.markdown("""
             letter-spacing: 1px;
         }
         
-        /* Modifikasi Expander Sidebar */
         .streamlit-expanderHeader {
             font-weight: 600 !important;
             color: #111111 !important;
@@ -135,7 +134,6 @@ with st.sidebar:
     with st.expander("🗓️ Waktu Observasi", expanded=True):
         st.caption("Wajib diisi untuk menentukan rentang kolom tahun.")
         col1, col2 = st.columns(2)
-        # Nilai default diubah menjadi None (Kosong)
         start_year = col1.number_input("Dari", value=None, placeholder="Cth: 2015", step=1, min_value=1900, max_value=2100)
         end_year = col2.number_input("Sampai", value=None, placeholder="Cth: 2023", step=1, min_value=1900, max_value=2100)
 
@@ -150,7 +148,6 @@ with st.sidebar:
         )
         
         daftar_negara_unik = sorted(list(set(country_map.values())))
-        # Menggunakan index=None (Kosong)
         if "Paksa" in opsi_negara:
             negara_paksaan = st.selectbox("Tujuan Pemaksaan:", daftar_negara_unik, index=None, placeholder="Pilih negara...")
             negara_pilihan = []
@@ -163,10 +160,7 @@ with st.sidebar:
 
     with st.expander("🌍 Koreksi Sandi Otomatis", expanded=True):
         st.caption("Tambahkan baris jika ada kode bursa yang ingin dikoreksi paksa (Opsional).")
-        
-        # Tabel default kosong, bersih tanpa bawaan OMAN dsb.
         default_corrections = pd.DataFrame(columns=["Kode Asing (Ketik)", "Ubah Menjadi Negara"])
-        
         edited_corrections = st.data_editor(default_corrections, num_rows="dynamic", use_container_width=True)
         
         custom_country_map = {}
@@ -228,7 +222,6 @@ if mulai_proses:
     elif start_year is None or end_year is None:
         st.error("🚨 WAKTU OBSERVASI KOSONG: Anda wajib mengisi 'Dari Tahun' dan 'Sampai Tahun' di menu samping kiri sebelum memulai.")
     else:
-        # Konversi ke Integer yang aman
         start_year = int(start_year)
         end_year = int(end_year)
         
@@ -241,9 +234,32 @@ if mulai_proses:
                 progress_bar = st.progress(0)
                 requested_years_list = list(range(start_year, end_year + 1))
                 
-                # TAHAP 1: Ekstraksi Data
-                for i, file in enumerate(uploaded_files):
-                    df = pd.read_excel(file, engine='openpyxl')
+                # 🚀 TAHAP 0: MEMBANGUN KAMUS NAMA BANK GLOBAL LINTAS-FILE
+                st.caption("🔍 Membangun Kamus Ingatan Nama Bank...")
+                raw_data_cache = []
+                global_ticker_map = {}
+                
+                for file in uploaded_files:
+                    df_raw = pd.read_excel(file, engine='openpyxl')
+                    raw_data_cache.append((file.name, df_raw))
+                    
+                    if 'Ticker' in df_raw.columns and 'Name' in df_raw.columns:
+                        # Abaikan 2 baris metadata awal
+                        df_temp = df_raw.iloc[2:].copy()
+                        for _, row in df_temp.iterrows():
+                            t = str(row['Ticker']).strip()
+                            n = str(row['Name']).strip().upper()
+                            # Jika nama valid (bukan NaN/kosong)
+                            if n not in ['NAN', 'NONE', 'NULL', 'NA', ''] and len(n) > 2:
+                                if t not in global_ticker_map:
+                                    global_ticker_map[t] = n
+                                else:
+                                    # Simpan nama yang paling pendek (biasanya paling bersih)
+                                    if len(n) < len(global_ticker_map[t]):
+                                        global_ticker_map[t] = n
+                
+                # TAHAP 1: Ekstraksi Data Utama
+                for i, (fname, df) in enumerate(raw_data_cache):
                     year_cols = [col for col in df.columns if ":" in str(col)]
                     if not year_cols:
                         continue
@@ -255,16 +271,23 @@ if mulai_proses:
                     df = df.drop([0, 1]).reset_index(drop=True)
                     df['country_code'] = df['Ticker'].apply(get_country_code)
                     
-                    # Penerapan Kamus
+                    # Penerapan Kamus Negara
                     df['country'] = df['country_code'].map(custom_country_map).fillna(df['country_code'].map(country_map)).fillna(df['country_code'])
                     df = df.rename(columns={'Name': 'bank'})
                     
-                    # Fallback ke Ticker
-                    df['bank'] = df['bank'].fillna(df['Ticker'])
+                    # 🚀 INJEKSI NAMA BANK DARI KAMUS GLOBAL
+                    df['Ticker_Clean'] = df['Ticker'].astype(str).str.strip()
                     df['bank'] = df['bank'].astype(str).str.strip().str.upper()
                     
+                    # 1. Cari bank yang kosong, lalu tembakkan ingatan dari kamus global
                     mask_kosong = df['bank'].isin(['NAN', 'NONE', 'NULL', 'NA', ''])
-                    df.loc[mask_kosong, 'bank'] = df.loc[mask_kosong, 'Ticker'].astype(str).str.strip().str.upper()
+                    df.loc[mask_kosong, 'bank'] = df.loc[mask_kosong, 'Ticker_Clean'].map(global_ticker_map)
+                    
+                    # 2. Jika di semua file memang namanya tidak ada, baru pasrah pakai Ticker
+                    df['bank'] = df['bank'].fillna(df['Ticker_Clean'])
+                    df['bank'] = df['bank'].astype(str).str.strip().str.upper()
+                    mask_kosong_akhir = df['bank'].isin(['NAN', 'NONE', 'NULL', 'NA', ''])
+                    df.loc[mask_kosong_akhir, 'bank'] = df.loc[mask_kosong_akhir, 'Ticker_Clean']
                     
                     df['country'] = df['country'].astype(str).str.strip().str.upper()
                     
