@@ -60,7 +60,7 @@ st.markdown("<div class='premium-title'>Bloomberg Panel Engine</div>", unsafe_al
 st.markdown("<div class='premium-subtitle'>Ekstraksi Otomatis, Pemaksaan Target Negara, & Penghapus Duplikat Cerdas</div>", unsafe_allow_html=True)
 
 # ==========================================
-# 2. KAMUS NEGARA GLOBAL
+# 2. KAMUS NEGARA GLOBAL BLOOMBERG
 # ==========================================
 country_map = {
     'IJ': 'INDONESIA', 'MK': 'MALAYSIA', 'SP': 'SINGAPORE', 'TB': 'THAILAND',
@@ -110,31 +110,52 @@ with st.sidebar:
         start_year = col1.number_input("Dari", value=2015, step=1)
         end_year = col2.number_input("Sampai", value=2026, step=1)
 
-    # 🚀 FITUR BARU: PEMAKSAAN & FILTER NEGARA
-    with st.expander("🌍 Target & Koreksi Negara (PENTING)", expanded=True):
+    with st.expander("🎯 Target & Filter Negara", expanded=True):
         opsi_negara = st.radio(
-            "Tindakan untuk Ticker Nyasar/Asing:",
+            "Tindakan untuk file ini:",
             [
-                "1. Otomatis (Deteksi dari Ticker)",
-                "2. PAKSA 1 NEGARA (Ubah SEMUA jadi 1 negara)",
-                "3. FILTER NEGARA (Hapus negara di luar target)"
+                "1. Otomatis (Sesuai Bawaan Bloomberg)",
+                "2. PAKSA 1 NEGARA (Sangat Disarankan)",
+                "3. FILTER (Pilih Beberapa Negara)"
             ],
-            help="Pilih opsi 2 jika file yang diunggah hanya untuk 1 negara (misal Oman). Maka ticker nyasar ke Jerman/Inggris akan otomatis dipaksa menjadi Oman."
+            help="Opsi 2 akan mengabaikan semua kode bursa asing dan memaksa seluruh data di file tersebut diakui sebagai 1 negara pilihan Anda."
         )
         
+        daftar_negara_unik = sorted(list(set(country_map.values())))
         if "PAKSA" in opsi_negara:
-            negara_paksaan = st.selectbox("Ubah semua bank di file menjadi negara:", sorted(list(set(country_map.values()))), index=sorted(list(set(country_map.values()))).index("OMAN") if "OMAN" in country_map.values() else 0)
+            negara_paksaan = st.selectbox("Paksa semua data menjadi negara:", daftar_negara_unik, index=daftar_negara_unik.index("OMAN") if "OMAN" in daftar_negara_unik else 0)
             negara_pilihan = []
         elif "FILTER" in opsi_negara:
-            negara_pilihan = st.multiselect("Hanya pertahankan data dari negara:", sorted(list(set(country_map.values()))), default=["OMAN", "LEBANON"])
+            negara_pilihan = st.multiselect("Pertahankan hanya data dari:", daftar_negara_unik, default=["OMAN", "LEBANON"])
             negara_paksaan = None
         else:
             negara_paksaan = None
             negara_pilihan = []
 
-        st.write("---")
-        st.caption("🔧 Koreksi Sandi Manual Khusus")
-        custom_map_str = st.text_area("Format: KODE_BURSA=NEGARA_BENAR", value="EO=OMAN,\nEU=OMAN,\nEP=OMAN,\nEZ=OMAN,\nB3=OMAN,\nL1=OMAN,\nL3=OMAN,\nLI=OMAN,\nS2=OMAN")
+    # 🚀 FITUR BARU 1: TABEL KOREKSI INTERAKTIF
+    with st.expander("🌍 Koreksi Sandi Otomatis", expanded=True):
+        st.caption("Jika kode bursa nyasar, aplikasi akan mengubahnya berdasarkan tabel ini. Anda bisa mengeklik tabel untuk menambah/mengedit secara visual.")
+        
+        default_corrections = pd.DataFrame({
+            "Kode Asing (Ketik)": ["EO", "EU", "EP", "EZ", "B3", "L1", "L3", "LI", "S2"],
+            "Ubah Menjadi Negara": ["OMAN", "OMAN", "OMAN", "OMAN", "OMAN", "OMAN", "OMAN", "OMAN", "OMAN"]
+        })
+        
+        edited_corrections = st.data_editor(default_corrections, num_rows="dynamic", use_container_width=True)
+        
+        custom_country_map = {}
+        for _, row in edited_corrections.iterrows():
+            if pd.notna(row["Kode Asing (Ketik)"]) and pd.notna(row["Ubah Menjadi Negara"]):
+                k = str(row["Kode Asing (Ketik)"]).strip().upper()
+                v = str(row["Ubah Menjadi Negara"]).strip().upper()
+                if k and v:
+                    custom_country_map[k] = v
+
+    # 🚀 FITUR BARU 2: BUKU SAKU REFERENSI KODE BLOOMBERG
+    with st.expander("📚 Buku Saku Kode Bloomberg", expanded=False):
+        st.caption("Gunakan tabel ini untuk mencari kode sandi standar dari berbagai negara.")
+        df_kamus = pd.DataFrame(list(country_map.items()), columns=["KODE", "NAMA NEGARA"])
+        st.dataframe(df_kamus, hide_index=True, use_container_width=True, height=250)
 
     with st.expander("🛡️ Kecerdasan Pembersih Duplikat", expanded=True):
         opsi_duplikat = st.radio(
@@ -144,8 +165,7 @@ with st.sidebar:
                 "Hapus jika NAMA BANK persis sama",
                 "Hapus jika NILAI DATA sama (Silang Negara)"
             ],
-            index=2,
-            help="Menghapus duplikat kembar dan menendang baris yang nama bank-nya kosong."
+            index=2
         )
 
     with st.expander("⚖️ Desain Tabel Stata", expanded=True):
@@ -153,14 +173,6 @@ with st.sidebar:
             "Format Panel Data:",
             ["Unbalanced (Struktur Tahun Utuh, Ada Nilai Kosong)", "Balanced (Hapus Baris yang Punya Nilai Kosong)"]
         )
-
-# Memproses Kamus Manual
-custom_country_map = {}
-if custom_map_str:
-    for item in custom_map_str.replace('\n', ',').split(','):
-        if '=' in item:
-            k, v = item.split('=')
-            custom_country_map[k.strip().upper()] = v.strip().upper()
 
 # ==========================================
 # 4. AREA KERJA UTAMA
@@ -190,7 +202,6 @@ if mulai_proses:
         with st.status("🛠️ Membedah file dan menyelaraskan rentang tahun...", expanded=True) as status:
             progress_bar = st.progress(0)
             
-            # Kunci Rentang Tahun Secara Absolut
             requested_years_list = list(range(start_year, end_year + 1))
             
             # TAHAP 1: Ekstraksi Data
@@ -207,19 +218,19 @@ if mulai_proses:
                 df = df.drop([0, 1]).reset_index(drop=True)
                 df['country_code'] = df['Ticker'].apply(get_country_code)
                 
-                # Pemetaan Awal
+                # Penerapan Kamus Kustom (Dari Tabel Interaktif) -> Kamus Asli Bloomberg
                 df['country'] = df['country_code'].map(custom_country_map).fillna(df['country_code'].map(country_map)).fillna(df['country_code'])
                 df['country'] = df['country'].astype(str).str.strip().str.upper()
                 df['bank'] = df['bank'].astype(str).str.strip().str.upper()
                 
-                # 🚀 PENERAPAN FITUR PAKSA / FILTER NEGARA
+                # Penerapan Opsi Paksa/Filter
                 if "PAKSA" in opsi_negara:
                     df['country'] = negara_paksaan
                 elif "FILTER" in opsi_negara:
                     if negara_pilihan:
                         df = df[df['country'].isin(negara_pilihan)]
                         if df.empty:
-                            continue # Lompati file ini jika tidak ada negara target di dalamnya
+                            continue
                 
                 valid_year_cols = [col for col in year_cols if start_year <= int(str(col).split(":")[1][:4]) <= end_year]
                 rename_dict = {col: int(str(col).split(":")[1][:4]) for col in valid_year_cols}
@@ -229,7 +240,6 @@ if mulai_proses:
                     
                 df = df.rename(columns=rename_dict)
                 
-                # Memastikan kolom tahun lengkap dari ujung ke ujung
                 for yr in requested_years_list:
                     if yr not in df.columns:
                         df[yr] = np.nan
@@ -254,7 +264,6 @@ if mulai_proses:
                 df_var = pd.concat(list_dfs, ignore_index=True)
                 
                 df_var['is_standard'] = df_var['country'].str.len() > 2
-                # Mendeteksi dan melempar nama bank kosong ke bawah agar terhapus
                 df_var['is_valid_bank_name'] = df_var['bank'].apply(
                     lambda x: len(str(x).strip()) >= 2 and str(x).strip().upper() not in ['NAN', 'NONE', 'NULL', 'NA']
                 )
