@@ -128,8 +128,8 @@ with st.sidebar:
     st.write("### ⚙️ Konfigurasi")
     st.write("---")
     
-    with st.expander("🗓️ Waktu Observasi", expanded=True):
-        st.caption("Wajib diisi untuk menentukan rentang kolom tahun.")
+    with st.expander("🗓️ Rentang Waktu Observasi", expanded=True):
+        st.caption("Mesin akan otomatis mendeteksi apakah data Anda berformat Tahunan, Triwulanan, atau Bulanan selama tahunnya berada dalam rentang ini.")
         col1, col2 = st.columns(2)
         start_year = col1.number_input("Dari", value=None, placeholder="Cth: 2015", step=1, min_value=1900, max_value=2100)
         end_year = col2.number_input("Sampai", value=None, placeholder="Cth: 2023", step=1, min_value=1900, max_value=2100)
@@ -229,7 +229,6 @@ if mulai_proses:
             
             with st.status("🛠️ Mengekstraksi dan Membersihkan Data...", expanded=True) as status:
                 progress_bar = st.progress(0)
-                requested_years_list = list(range(start_year, end_year + 1))
                 
                 # TAHAP 0: MEMBANGUN KAMUS NAMA BANK GLOBAL LINTAS-FILE
                 st.caption("🔍 Membangun Kamus Ingatan Nama Bank...")
@@ -251,6 +250,30 @@ if mulai_proses:
                                 else:
                                     if len(n) < len(global_ticker_map[t]):
                                         global_ticker_map[t] = n
+                                        
+                # 🚀 TAHAP 0.5: DETEKSI FREKUENSI WAKTU DINAMIS (TAHUNAN/TRIWULAN/BULANAN)
+                st.caption("📅 Menganalisis dan menyelaraskan frekuensi waktu...")
+                valid_periods_set = set()
+                for fname, df in raw_data_cache:
+                    for col in df.columns:
+                        if ":" in str(col):
+                            # Mengambil string waktu mentah (misal: "2015", "2015Q1", atau "2015-01")
+                            raw_period = str(col).split(":", 1)[1].strip().upper()
+                            
+                            # Ekstrak 4 angka pertama sebagai asumsi Tahun
+                            match = re.search(r'\d{4}', raw_period)
+                            if match:
+                                y = int(match.group())
+                                # Simpan periodenya secara utuh jika tahun masuk kriteria
+                                if start_year <= y <= end_year:
+                                    valid_periods_set.add(raw_period)
+                
+                requested_periods_list = sorted(list(valid_periods_set))
+                
+                if not requested_periods_list:
+                    status.update(label="❌ Kesalahan Data", state="error", expanded=True)
+                    st.error(f"🚨 TIDAK ADA DATA WAKTU: Tidak ditemukan entri waktu dengan tahun antara {start_year} - {end_year} di dalam file Excel Anda.")
+                    st.stop()
                 
                 # TAHAP 1: Ekstraksi Data Utama
                 for i, (fname, df) in enumerate(raw_data_cache):
@@ -288,19 +311,24 @@ if mulai_proses:
                         if df.empty:
                             continue
                     
-                    valid_year_cols = [col for col in year_cols if start_year <= int(str(col).split(":")[1][:4]) <= end_year]
-                    rename_dict = {col: int(str(col).split(":")[1][:4]) for col in valid_year_cols}
+                    # Pemetaan dan Ekstraksi berdasarkan Periode yang Ditemukan
+                    rename_dict = {}
+                    for col in year_cols:
+                        raw_period = str(col).split(":", 1)[1].strip().upper()
+                        if raw_period in requested_periods_list:
+                            rename_dict[col] = raw_period
                     
-                    for col in valid_year_cols:
+                    for col in rename_dict.keys():
                         df[col] = pd.to_numeric(df[col], errors='coerce')
                         
                     df = df.rename(columns=rename_dict)
                     
-                    for yr in requested_years_list:
-                        if yr not in df.columns:
-                            df[yr] = np.nan
+                    # Tambahkan periode kosong untuk memastikan ukuran sama walau tidak ada data di file ini
+                    for per in requested_periods_list:
+                        if per not in df.columns:
+                            df[per] = np.nan
                     
-                    df_wide = df[['country', 'bank'] + requested_years_list]
+                    df_wide = df[['country', 'bank'] + requested_periods_list]
                     
                     if clean_var_name not in dict_variabel_dfs_wide:
                         dict_variabel_dfs_wide[clean_var_name] = []
@@ -324,17 +352,9 @@ if mulai_proses:
                         lambda x: len(str(x).strip()) >= 2 and str(x).strip().upper() not in ['NAN', 'NONE', 'NULL', 'NA']
                     )
                     
-                    # 🚀 FITUR BARU: MENDETEKSI KASTA NAMA (TICKER VS NAMA ASLI)
-                    # Jika nama mengandung kata " EQUITY", ia akan ditandai True. Mesin akan mengutamakan yang nilainya False.
                     df_var['is_ticker_name'] = df_var['bank'].astype(str).str.contains(' EQUITY', case=False, na=False)
-                    
                     df_var['bank_len'] = df_var['bank'].str.len()
                     
-                    # Pengurutan:
-                    # 1. is_standard == True (Di Atas)
-                    # 2. is_valid_bank_name == True (Di Atas)
-                    # 3. is_ticker_name == False (Nama Asli Harus Di Atas Ticker)
-                    # 4. bank_len == Kecil (Nama Terpendek Di Atas)
                     df_var = df_var.sort_values(
                         by=['is_standard', 'is_valid_bank_name', 'is_ticker_name', 'bank_len', 'bank'], 
                         ascending=[False, False, True, True, True]
@@ -343,24 +363,25 @@ if mulai_proses:
                     if "NAMA BANK" in opsi_duplikat:
                         df_var = df_var.drop_duplicates(subset=['country', 'bank'], keep='first')
                     elif "NILAI DATA" in opsi_duplikat:
-                        has_data = df_var[requested_years_list].notna().any(axis=1)
+                        has_data = df_var[requested_periods_list].notna().any(axis=1)
                         df_with_data = df_var[has_data]
                         df_no_data = df_var[~has_data]
                         
-                        df_with_data = df_with_data.drop_duplicates(subset=requested_years_list, keep='first')
+                        df_with_data = df_with_data.drop_duplicates(subset=requested_periods_list, keep='first')
                         df_var = pd.concat([df_with_data, df_no_data], ignore_index=True)
                     
                     df_var = df_var.drop(columns=['is_standard', 'is_valid_bank_name', 'is_ticker_name', 'bank_len'])
                     
-                    df_long = pd.melt(df_var, id_vars=['country', 'bank'], value_vars=requested_years_list, var_name='year', value_name=var_name)
-                    df_long = df_long.drop_duplicates(subset=['country', 'bank', 'year'], keep='first')
+                    # Unpivot Data menggunakan referensi 'period'
+                    df_long = pd.melt(df_var, id_vars=['country', 'bank'], value_vars=requested_periods_list, var_name='period', value_name=var_name)
+                    df_long = df_long.drop_duplicates(subset=['country', 'bank', 'period'], keep='first')
                     all_processed_dfs.append(df_long)
                 
                 st.caption("⚙️ Menyusun arsitektur Stata akhir...")
                 
                 # TAHAP 3: Penggabungan Keseluruhan
                 if all_processed_dfs:
-                    df_master = reduce(lambda left, right: pd.merge(left, right, on=['country', 'bank', 'year'], how='outer'), all_processed_dfs)
+                    df_master = reduce(lambda left, right: pd.merge(left, right, on=['country', 'bank', 'period'], how='outer'), all_processed_dfs)
                     
                     if "Balanced" in opsi_panel:
                         bank_cacat = df_master[df_master[variabel_list].isna().any(axis=1)][['country', 'bank']].drop_duplicates()
@@ -371,13 +392,14 @@ if mulai_proses:
                     
                     if df_master.empty:
                         status.update(label="❌ Kesalahan Logika", state="error", expanded=True)
-                        st.error("🚨 KOSONG TOTAL: Tidak ada entitas bank yang memenuhi kriteria. Jika Anda memakai mode 'Balanced', ini berarti tidak ada satu bank pun yang memiliki data absolut 100% penuh dari tahun awal sampai akhir yang Anda tentukan.")
+                        st.error("🚨 KOSONG TOTAL: Tidak ada entitas bank yang memenuhi kriteria. Jika Anda memakai mode 'Balanced', ini berarti tidak ada satu bank pun yang memiliki data penuh di seluruh periode waktu yang Anda tentukan.")
                     else:
-                        df_master = df_master.sort_values(by=['country', 'bank', 'year']).reset_index(drop=True)
+                        df_master = df_master.sort_values(by=['country', 'bank', 'period']).reset_index(drop=True)
                         df_master['country_id'] = df_master.groupby('country').ngroup() + 1
                         df_master['bank_id'] = df_master.groupby('bank').ngroup() + 1
                         
-                        kolom_awal = ['country_id', 'bank_id', 'country', 'bank', 'year']
+                        # Menyusun letak kolom akhir, 'year' telah diubah menjadi 'period' yang lebih universal
+                        kolom_awal = ['country_id', 'bank_id', 'country', 'bank', 'period']
                         df_master = df_master[kolom_awal + variabel_list]
                         
                         status.update(label="✅ Selesai: Master Panel Siap Diunduh!", state="complete", expanded=False)
