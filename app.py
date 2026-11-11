@@ -159,6 +159,18 @@ with st.sidebar:
                 v = str(row["Ubah Menjadi Negara"]).strip().upper()
                 if k and v: custom_country_map[k] = v
 
+    # KEMBALINYA FITUR DUPLIKAT
+    with st.expander("🛡️ Proteksi Duplikat", expanded=True):
+        opsi_duplikat = st.radio(
+            "Pilih Mode Deteksi:",
+            [
+                "Biarkan semua data (Jangan hapus)", 
+                "Hapus jika NAMA BANK persis sama",
+                "Hapus jika NILAI DATA sama (Silang Negara)"
+            ],
+            index=2
+        )
+
     with st.expander("⚖️ Desain Tabel Stata", expanded=True):
         opsi_panel = st.radio(
             "Format Panel Akhir:",
@@ -306,9 +318,10 @@ if mulai_proses:
                 
                 st.caption("🔄 Mengeliminasi duplikat Bloomberg...")
                 
-                # TAHAP 2: PEMBERSIHAN DUPLIKAT
+                # TAHAP 2: PEMBERSIHAN DUPLIKAT (SUDAH KEMBALI)
                 all_processed_dfs = []
-                variabel_list = list(dict_variabel_dfs_wide.keys())
+                mikro_vars = list(dict_variabel_dfs_wide.keys()) # Variabel Bloomberg saja
+                makro_vars = [] # Variabel World Bank
                 
                 for var_name, list_dfs in dict_variabel_dfs_wide.items():
                     if not list_dfs: continue
@@ -324,10 +337,14 @@ if mulai_proses:
                         ascending=[False, False, True, True, True]
                     )
                     
-                    has_data = df_var[requested_periods_list].notna().any(axis=1)
-                    df_with_data = df_var[has_data].drop_duplicates(subset=requested_periods_list, keep='first')
-                    df_no_data = df_var[~has_data]
-                    df_var = pd.concat([df_with_data, df_no_data], ignore_index=True)
+                    # LOGIKA DUPLIKAT DIKEMBALIKAN
+                    if "NAMA BANK" in opsi_duplikat:
+                        df_var = df_var.drop_duplicates(subset=['country', 'bank'], keep='first')
+                    elif "NILAI DATA" in opsi_duplikat:
+                        has_data = df_var[requested_periods_list].notna().any(axis=1)
+                        df_with_data = df_var[has_data].drop_duplicates(subset=requested_periods_list, keep='first')
+                        df_no_data = df_var[~has_data]
+                        df_var = pd.concat([df_with_data, df_no_data], ignore_index=True)
                     
                     df_var = df_var.drop(columns=['is_standard', 'is_valid_bank_name', 'is_ticker_name', 'bank_len'])
                     df_long = pd.melt(df_var, id_vars=['country', 'bank'], value_vars=requested_periods_list, var_name='period', value_name=var_name)
@@ -340,14 +357,12 @@ if mulai_proses:
                 if all_processed_dfs:
                     df_master = reduce(lambda left, right: pd.merge(left, right, on=['country', 'bank', 'period'], how='outer'), all_processed_dfs)
                     
-                    # 🚀 TAHAP 4: INTEGRASI WORLD BANK MAKRO
+                    # TAHAP 4: INTEGRASI WORLD BANK MAKRO
                     if uploaded_wb_files:
                         st.caption("🌍 Menyuntikkan Data Makro World Bank ke Q4/Akhir Tahun...")
                         
-                        # 1. Ekstrak tahun sebagai jembatan merge
                         df_master['Merge_Year'] = df_master['period'].astype(str).str[:4].astype(int)
                         
-                        # 2. Deteksi apakah ini periode akhir tahun (Q4, Bulan 12, atau Tahunan tunggal)
                         def is_end_of_year(p):
                             p = str(p).upper().strip()
                             if len(p) == 4: return True
@@ -355,7 +370,6 @@ if mulai_proses:
                             return False
                         df_master['is_target_macro'] = df_master['period'].apply(is_end_of_year)
                         
-                        # Kamus Penyelaras Nama Negara (World Bank -> Bloomberg)
                         wb_rename_map = {
                             'KOREA, REP.': 'SOUTH KOREA', 'EGYPT, ARAB REP.': 'EGYPT', 
                             'VENEZUELA, RB': 'VENEZUELA', 'YEMEN, REP.': 'YEMEN', 
@@ -366,44 +380,41 @@ if mulai_proses:
                         }
                         
                         for wb_file in uploaded_wb_files:
-                            # Membaca data World Bank (baris 1-3 dibuang karena isinya metadata kosong)
-                            df_wb = pd.read_excel(wb_file, skiprows=3)
+                            try:
+                                df_wb = pd.read_excel(wb_file, skiprows=3)
+                            except Exception:
+                                df_wb = pd.read_excel(wb_file) # Fallback jika barisnya beda
                             
-                            # Ekstrak nama variabel makro
                             if 'Indicator Name' in df_wb.columns:
                                 raw_macro_name = df_wb['Indicator Name'].iloc[0]
                                 macro_var_name = re.sub(r'[^a-zA-Z0-9]', '_', str(raw_macro_name)).lower()
-                                macro_var_name = re.sub(r'_+', '_', macro_var_name).strip('_')[:32] # Stata max 32 chars
+                                macro_var_name = re.sub(r'_+', '_', macro_var_name).strip('_')[:32] 
                             else:
                                 macro_var_name = "macro_data"
                                 
-                            # Ubah format memanjang
                             wb_year_cols = [c for c in df_wb.columns if str(c).isdigit()]
                             df_wb_long = df_wb.melt(id_vars=['Country Name'], value_vars=wb_year_cols, var_name='Year', value_name=macro_var_name)
                             
-                            # Selaraskan nama negara dengan data kita
                             df_wb_long['country'] = df_wb_long['Country Name'].astype(str).str.upper().str.strip()
                             df_wb_long['country'] = df_wb_long['country'].replace(wb_rename_map)
                             df_wb_long['Year'] = df_wb_long['Year'].astype(int)
                             
-                            # Hapus data kosong untuk efisiensi
                             df_wb_clean = df_wb_long[['country', 'Year', macro_var_name]].dropna(subset=[macro_var_name])
                             
-                            # Lakukan Merge ke Master Panel
                             df_master = pd.merge(df_master, df_wb_clean, left_on=['country', 'Merge_Year'], right_on=['country', 'Year'], how='left')
                             
-                            # 🎯 LOGIKA INTI: Hapus nilai makro jika BUKAN akhir tahun (ubah jadi kosong/NaN)
                             df_master.loc[~df_master['is_target_macro'], macro_var_name] = np.nan
                             
-                            # Bersihkan kolom bantu
                             df_master = df_master.drop(columns=['Year'])
-                            if macro_var_name not in variabel_list:
-                                variabel_list.append(macro_var_name)
+                            if macro_var_name not in makro_vars:
+                                makro_vars.append(macro_var_name)
                                 
                         df_master = df_master.drop(columns=['Merge_Year', 'is_target_macro'])
                     
+                    # 🚀 PERBAIKAN LOGIKA BALANCED (HANYA CEK DATA MIKRO)
                     if "Balanced" in opsi_panel:
-                        bank_cacat = df_master[df_master[variabel_list].isna().any(axis=1)][['country', 'bank']].drop_duplicates()
+                        # Ia hanya mengecek `mikro_vars` agar tidak terpicu nilai kosong wajar pada Q1-Q3 di kolom Makro
+                        bank_cacat = df_master[df_master[mikro_vars].isna().any(axis=1)][['country', 'bank']].drop_duplicates()
                         if not bank_cacat.empty:
                             df_master = df_master.set_index(['country', 'bank'])
                             bank_cacat_idx = bank_cacat.set_index(['country', 'bank']).index
@@ -411,21 +422,21 @@ if mulai_proses:
                     
                     if df_master.empty:
                         status.update(label="❌ Kesalahan Logika", state="error", expanded=True)
-                        st.error("🚨 KOSONG TOTAL: Tidak ada bank yang memiliki data absolut (Terutama setelah di-Balance).")
+                        st.error("🚨 KOSONG TOTAL: Tidak ada bank yang memiliki data absolut 100% penuh di periode ini.")
                     else:
                         df_master = df_master.sort_values(by=['country', 'bank', 'period']).reset_index(drop=True)
                         df_master['country_id'] = df_master.groupby('country').ngroup() + 1
                         df_master['bank_id'] = df_master.groupby('bank').ngroup() + 1
                         
                         kolom_awal = ['country_id', 'bank_id', 'country', 'bank', 'period']
-                        df_master = df_master[kolom_awal + variabel_list]
+                        df_master = df_master[kolom_awal + mikro_vars + makro_vars]
                         
                         status.update(label="✅ Selesai: Panel Ekonometrika Siap!", state="complete", expanded=False)
                         st.balloons()
                         
                         st.write("### 📊 Statistik Parameter Akhir")
                         m1, m2, m3, m4 = st.columns(4)
-                        m1.metric("Variabel (Mikro + Makro)", len(variabel_list))
+                        m1.metric("Variabel (Mikro + Makro)", len(mikro_vars) + len(makro_vars))
                         m2.metric("Negara Terdaftar", df_master['country'].nunique())
                         m3.metric("Entitas Bank", f"{df_master['bank'].nunique():,}")
                         m4.metric("Baris Observasi (N)", f"{len(df_master):,}")
