@@ -159,6 +159,18 @@ with st.sidebar:
                 v = str(row["Ubah Menjadi Negara"]).strip().upper()
                 if k and v: custom_country_map[k] = v
 
+    # KEMBALINYA PROTEKSI DUPLIKAT!
+    with st.expander("🛡️ Proteksi Duplikat", expanded=True):
+        opsi_duplikat = st.radio(
+            "Pilih Mode Deteksi:",
+            [
+                "Biarkan semua data (Jangan hapus)", 
+                "Hapus jika NAMA BANK persis sama",
+                "Hapus jika NILAI DATA sama (Silang Negara/Bank Hantu)"
+            ],
+            index=2
+        )
+
     with st.expander("⚖️ Desain Tabel Stata", expanded=True):
         opsi_panel = st.radio(
             "Format Panel Akhir:",
@@ -237,7 +249,7 @@ if mulai_proses:
                                     if len(n) < len(global_ticker_map[t]):
                                         global_ticker_map[t] = n
                                         
-                # TAHAP 0.5: DETEKSI WAKTU ALFANUMERIK (Format Bebas)
+                # TAHAP 0.5: DETEKSI WAKTU ALFANUMERIK
                 st.caption("📅 Menganalisis frekuensi waktu Bloomberg...")
                 valid_periods_set = set()
                 for fname, df in raw_data_cache:
@@ -272,11 +284,11 @@ if mulai_proses:
                     df['Ticker_Clean'] = df['Ticker'].astype(str).str.strip()
                     df['bank'] = df['bank'].astype(str).str.strip().str.upper()
                     
-                    # Coba selamatkan nama dari file lain jika ada
+                    # Selamatkan nama dari file lain jika ada
                     mask_kosong = df['bank'].isin(['NAN', 'NONE', 'NULL', 'NA', ''])
                     df.loc[mask_kosong, 'bank'] = df.loc[mask_kosong, 'Ticker_Clean'].map(global_ticker_map)
                     
-                    # 🚀 PEMUSNAHAN BANK TANPA NAMA / HANYA TICKER
+                    # 🚀 PROTOKOL PEMUSNAHAN BANK TANPA NAMA (HANYA TICKER)
                     mask_invalid_name = (
                         df['bank'].isna() | 
                         df['bank'].isin(['NAN', 'NONE', 'NULL', 'NA', '']) | 
@@ -311,9 +323,9 @@ if mulai_proses:
                     dict_variabel_dfs_wide[clean_var_name].append(df_wide)
                     progress_bar.progress((i + 1) / len(uploaded_files))
                 
-                st.caption("🔄 Mengonsolidasi Data Antar-File...")
+                st.caption("🔄 Mengonsolidasi & Membasmi Bank Duplikat...")
                 
-                # TAHAP 2: KONSOLIDASI MAX (MENGGABUNGKAN DATA DARI FILE 1 & FILE 2)
+                # TAHAP 2: KONSOLIDASI & ELIMINASI DUPLIKAT
                 all_processed_dfs = []
                 mikro_vars = list(dict_variabel_dfs_wide.keys())
                 makro_vars = []
@@ -322,14 +334,41 @@ if mulai_proses:
                     if not list_dfs: continue
                     df_var = pd.concat(list_dfs, ignore_index=True)
                     
-                    # Konversi ke angka agar mesin konsolidasi bisa mencari nilai maksimal
+                    # Konversi angka untuk mencari nilai maksimal
                     for col in requested_periods_list:
                         df_var[col] = pd.to_numeric(df_var[col], errors='coerce')
                         
-                    # 🚀 ALGORITMA KONSOLIDASI FILE (Otomatis menghilangkan duplikat & mengisi sel kosong antar file)
+                    # 🚀 1. KONSOLIDASI FILE: Menyatukan data bank yang namanya persis sama dari banyak file
                     df_var = df_var.groupby(['country', 'bank'], as_index=False)[requested_periods_list].max()
                     
+                    # 🚀 2. SISTEM PERINGKAT NAMA: Menghukum nama-nama kloningan (Rights/ADR) agar berada di bawah
+                    df_var['is_standard'] = df_var['country'].str.len() > 2
+                    df_var['is_valid_bank_name'] = df_var['bank'].apply(lambda x: len(str(x).strip()) >= 2)
+                    df_var['is_ticker_name'] = df_var['bank'].astype(str).str.contains(' EQUITY', case=False, na=False)
+                    df_var['is_derivative'] = df_var['bank'].astype(str).str.contains(r'-RIGHT|-RTS|-SDR|ADR|FOREIGN|RIGHTS', regex=True, case=False)
+                    df_var['bank_len'] = df_var['bank'].str.len()
+                    
+                    df_var = df_var.sort_values(
+                        by=['is_standard', 'is_valid_bank_name', 'is_ticker_name', 'is_derivative', 'bank_len', 'bank'], 
+                        ascending=[False, False, True, True, True, True]
+                    )
+                    
+                    # 🚀 3. ALGORITMA PROTEKSI DUPLIKAT (Menghancurkan Bank Kloningan)
+                    if "NAMA BANK" in opsi_duplikat:
+                        df_var = df_var.drop_duplicates(subset=['country', 'bank'], keep='first')
+                    elif "NILAI DATA" in opsi_duplikat:
+                        has_data = df_var[requested_periods_list].notna().any(axis=1)
+                        # Hapus bank yang datanya kembar
+                        df_with_data = df_var[has_data].drop_duplicates(subset=requested_periods_list, keep='first')
+                        # Hapus baris hantu kosong yang juga kembar
+                        df_no_data = df_var[~has_data].drop_duplicates(subset=['country', 'bank'], keep='first')
+                        df_var = pd.concat([df_with_data, df_no_data], ignore_index=True)
+                    
+                    df_var = df_var.drop(columns=['is_standard', 'is_valid_bank_name', 'is_ticker_name', 'is_derivative', 'bank_len'], errors='ignore')
+                    
+                    # Unpivot / Melt
                     df_long = pd.melt(df_var, id_vars=['country', 'bank'], value_vars=requested_periods_list, var_name='period', value_name=var_name)
+                    df_long = df_long.drop_duplicates(subset=['country', 'bank', 'period'], keep='first')
                     all_processed_dfs.append(df_long)
                 
                 st.caption("⚙️ Menyusun arsitektur master panel...")
