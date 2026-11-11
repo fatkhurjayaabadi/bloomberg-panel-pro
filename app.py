@@ -125,10 +125,10 @@ with st.sidebar:
     st.write("---")
     
     with st.expander("🗓️ Rentang Waktu Observasi", expanded=True):
-        st.caption("Bisa diisi Tahun bulat (2015), Kuartal (2016:Q4), atau Bulan (2016-12).")
+        st.caption("Bisa diisi 2018Q4, 2018:Q4, atau 2018-Q4 (Otomatis dibersihkan).")
         col1, col2 = st.columns(2)
-        start_period = col1.text_input("Dari", value="", placeholder="Cth: 2020:Q4")
-        end_period = col2.text_input("Sampai", value="", placeholder="Cth: 2024:Q3")
+        start_period = col1.text_input("Dari", value="", placeholder="Cth: 2018Q4")
+        end_period = col2.text_input("Sampai", value="", placeholder="Cth: 2023Q1")
 
     with st.expander("🎯 Target Negara", expanded=True):
         opsi_negara = st.radio(
@@ -158,17 +158,6 @@ with st.sidebar:
                 k = str(row["Kode Asing (Ketik)"]).strip().upper()
                 v = str(row["Ubah Menjadi Negara"]).strip().upper()
                 if k and v: custom_country_map[k] = v
-
-    with st.expander("🛡️ Proteksi Duplikat", expanded=True):
-        opsi_duplikat = st.radio(
-            "Pilih Mode Deteksi:",
-            [
-                "Biarkan semua data (Jangan hapus)", 
-                "Hapus jika NAMA BANK persis sama",
-                "Hapus jika NILAI DATA sama (Silang Negara)"
-            ],
-            index=2
-        )
 
     with st.expander("⚖️ Desain Tabel Stata", expanded=True):
         opsi_panel = st.radio(
@@ -214,14 +203,14 @@ if mulai_proses:
     elif not start_period or not end_period:
         st.error("🚨 WAKTU OBSERVASI KOSONG: Anda wajib mengisi 'Dari' dan 'Sampai'.")
     else:
-        start_period = start_period.strip().upper()
-        end_period = end_period.strip().upper()
+        # Pembersihan Teks Cerdas (Menyatukan Q1, :Q1, dan -Q1 menjadi sama di mata mesin)
+        start_period_safe = start_period.replace(":", "").replace("-", "").strip().upper()
+        end_period_safe = end_period.replace(":", "").replace("-", "").strip().upper()
         
-        if start_period > end_period:
+        if start_period_safe > end_period_safe:
             st.error("🚨 KESALAHAN LOGIKA: Periode 'Dari' tidak boleh lebih besar dari periode 'Sampai'.")
         else:
-            end_period_check = end_period + "Z" if len(end_period) == 4 and end_period.isdigit() else end_period
-
+            end_period_check = end_period_safe + "Z" if len(end_period_safe) == 4 and end_period_safe.isdigit() else end_period_safe
             dict_variabel_dfs_wide = {}
             
             with st.status("🛠️ Mengekstraksi dan Membersihkan Data...", expanded=True) as status:
@@ -248,24 +237,26 @@ if mulai_proses:
                                     if len(n) < len(global_ticker_map[t]):
                                         global_ticker_map[t] = n
                                         
-                # TAHAP 0.5: DETEKSI WAKTU ALFANUMERIK
+                # TAHAP 0.5: DETEKSI WAKTU ALFANUMERIK (Format Bebas)
                 st.caption("📅 Menganalisis frekuensi waktu Bloomberg...")
                 valid_periods_set = set()
                 for fname, df in raw_data_cache:
                     for col in df.columns:
                         if ":" in str(col):
                             raw_period = str(col).split(":", 1)[1].strip().upper()
-                            if start_period <= raw_period <= end_period_check:
+                            raw_period_safe = raw_period.replace(":", "").replace("-", "")
+                            
+                            if start_period_safe <= raw_period_safe <= end_period_check:
                                 valid_periods_set.add(raw_period)
                 
                 requested_periods_list = sorted(list(valid_periods_set))
                 
                 if not requested_periods_list:
                     status.update(label="❌ Kesalahan Data", state="error", expanded=True)
-                    st.error(f"🚨 TIDAK ADA DATA WAKTU: Tidak ditemukan rentang periode {start_period} s.d {end_period} di dalam file Excel Anda.")
+                    st.error(f"🚨 TIDAK ADA DATA WAKTU: Tidak ditemukan rentang periode {start_period} s.d {end_period} di file Anda.")
                     st.stop()
                 
-                # TAHAP 1: EKSTRAKSI BLOOMBERG
+                # TAHAP 1: EKSTRAKSI BLOOMBERG & PEMUSNAHAN BANK TANPA NAMA
                 for i, (fname, df) in enumerate(raw_data_cache):
                     year_cols = [col for col in df.columns if ":" in str(col)]
                     if not year_cols: continue
@@ -281,12 +272,18 @@ if mulai_proses:
                     df['Ticker_Clean'] = df['Ticker'].astype(str).str.strip()
                     df['bank'] = df['bank'].astype(str).str.strip().str.upper()
                     
+                    # Coba selamatkan nama dari file lain jika ada
                     mask_kosong = df['bank'].isin(['NAN', 'NONE', 'NULL', 'NA', ''])
                     df.loc[mask_kosong, 'bank'] = df.loc[mask_kosong, 'Ticker_Clean'].map(global_ticker_map)
-                    df['bank'] = df['bank'].fillna(df['Ticker_Clean']).astype(str).str.strip().str.upper()
                     
-                    mask_kosong_akhir = df['bank'].isin(['NAN', 'NONE', 'NULL', 'NA', ''])
-                    df.loc[mask_kosong_akhir, 'bank'] = df.loc[mask_kosong_akhir, 'Ticker_Clean']
+                    # 🚀 PEMUSNAHAN BANK TANPA NAMA / HANYA TICKER
+                    mask_invalid_name = (
+                        df['bank'].isna() | 
+                        df['bank'].isin(['NAN', 'NONE', 'NULL', 'NA', '']) | 
+                        df['bank'].astype(str).str.contains(' EQUITY', case=False, na=False)
+                    )
+                    df = df[~mask_invalid_name].copy()
+                    
                     df['country'] = df['country'].astype(str).str.strip().str.upper()
                     
                     if "Paksa" in opsi_negara and negara_paksaan:
@@ -314,9 +311,9 @@ if mulai_proses:
                     dict_variabel_dfs_wide[clean_var_name].append(df_wide)
                     progress_bar.progress((i + 1) / len(uploaded_files))
                 
-                st.caption("🔄 Mengeliminasi duplikat Bloomberg...")
+                st.caption("🔄 Mengonsolidasi Data Antar-File...")
                 
-                # TAHAP 2: PEMBERSIHAN DUPLIKAT & KONSOLIDASI FILE
+                # TAHAP 2: KONSOLIDASI MAX (MENGGABUNGKAN DATA DARI FILE 1 & FILE 2)
                 all_processed_dfs = []
                 mikro_vars = list(dict_variabel_dfs_wide.keys())
                 makro_vars = []
@@ -325,27 +322,14 @@ if mulai_proses:
                     if not list_dfs: continue
                     df_var = pd.concat(list_dfs, ignore_index=True)
                     
-                    df_var['is_standard'] = df_var['country'].str.len() > 2
-                    df_var['is_valid_bank_name'] = df_var['bank'].apply(lambda x: len(str(x).strip()) >= 2 and str(x).strip().upper() not in ['NAN', 'NONE', 'NULL', 'NA'])
-                    df_var['is_ticker_name'] = df_var['bank'].astype(str).str.contains(' EQUITY', case=False, na=False)
-                    df_var['bank_len'] = df_var['bank'].str.len()
+                    # Konversi ke angka agar mesin konsolidasi bisa mencari nilai maksimal
+                    for col in requested_periods_list:
+                        df_var[col] = pd.to_numeric(df_var[col], errors='coerce')
+                        
+                    # 🚀 ALGORITMA KONSOLIDASI FILE (Otomatis menghilangkan duplikat & mengisi sel kosong antar file)
+                    df_var = df_var.groupby(['country', 'bank'], as_index=False)[requested_periods_list].max()
                     
-                    df_var = df_var.sort_values(
-                        by=['is_standard', 'is_valid_bank_name', 'is_ticker_name', 'bank_len', 'bank'], 
-                        ascending=[False, False, True, True, True]
-                    )
-                    
-                    if "NAMA BANK" in opsi_duplikat:
-                        df_var = df_var.drop_duplicates(subset=['country', 'bank'], keep='first')
-                    elif "NILAI DATA" in opsi_duplikat:
-                        has_data = df_var[requested_periods_list].notna().any(axis=1)
-                        df_with_data = df_var[has_data].drop_duplicates(subset=requested_periods_list, keep='first')
-                        df_no_data = df_var[~has_data]
-                        df_var = pd.concat([df_with_data, df_no_data], ignore_index=True)
-                    
-                    df_var = df_var.drop(columns=['is_standard', 'is_valid_bank_name', 'is_ticker_name', 'bank_len'])
                     df_long = pd.melt(df_var, id_vars=['country', 'bank'], value_vars=requested_periods_list, var_name='period', value_name=var_name)
-                    df_long = df_long.drop_duplicates(subset=['country', 'bank', 'period'], keep='first')
                     all_processed_dfs.append(df_long)
                 
                 st.caption("⚙️ Menyusun arsitektur master panel...")
@@ -353,11 +337,6 @@ if mulai_proses:
                 # TAHAP 3: MERGE BLOOMBERG
                 if all_processed_dfs:
                     df_master = reduce(lambda left, right: pd.merge(left, right, on=['country', 'bank', 'period'], how='outer'), all_processed_dfs)
-                    
-                    # 🚀 ALGORITMA KONSOLIDASI (Merapatkan data dari banyak file agar tidak terdeteksi cacat oleh Balanced)
-                    for col in mikro_vars:
-                        df_master[col] = pd.to_numeric(df_master[col], errors='coerce')
-                    df_master = df_master.groupby(['country', 'bank', 'period'], as_index=False)[mikro_vars].max()
                     
                     # TAHAP 4: INTEGRASI WORLD BANK MAKRO
                     if uploaded_wb_files:
@@ -404,10 +383,9 @@ if mulai_proses:
                             df_wb_clean = df_wb_long[['country', 'Year', macro_var_name]].dropna(subset=[macro_var_name])
                             
                             df_master = pd.merge(df_master, df_wb_clean, left_on=['country', 'Merge_Year'], right_on=['country', 'Year'], how='left')
-                            
                             df_master.loc[~df_master['is_target_macro'], macro_var_name] = np.nan
-                            
                             df_master = df_master.drop(columns=['Year'])
+                            
                             if macro_var_name not in makro_vars:
                                 makro_vars.append(macro_var_name)
                                 
@@ -422,7 +400,7 @@ if mulai_proses:
                     
                     if df_master.empty:
                         status.update(label="❌ Kesalahan Logika", state="error", expanded=True)
-                        st.error("🚨 KOSONG TOTAL: Tidak ada bank yang memiliki data absolut penuh di periode yang diminta (Setiap bank yang terpilih harus memiliki data komplit dari awal sampai akhir tanpa terputus).")
+                        st.error("🚨 KOSONG TOTAL: Tidak ada bank yang memenuhi kriteria 'Balanced'. Silakan potong rentang observasi atau ubah format panel ke 'Unbalanced'.")
                     else:
                         df_master = df_master.sort_values(by=['country', 'bank', 'period']).reset_index(drop=True)
                         df_master['country_id'] = df_master.groupby('country').ngroup() + 1
@@ -438,7 +416,7 @@ if mulai_proses:
                         m1, m2, m3, m4 = st.columns(4)
                         m1.metric("Variabel (Mikro + Makro)", len(mikro_vars) + len(makro_vars))
                         m2.metric("Negara Terdaftar", df_master['country'].nunique())
-                        m3.metric("Entitas Bank", f"{df_master['bank'].nunique():,}")
+                        m3.metric("Entitas Bank Resmi", f"{df_master['bank'].nunique():,}")
                         m4.metric("Baris Observasi (N)", f"{len(df_master):,}")
                         
                         st.markdown("<br>", unsafe_allow_html=True)
@@ -463,4 +441,4 @@ if mulai_proses:
                             )
                 else:
                     status.update(label="❌ Terjadi Kesalahan", state="error", expanded=True)
-                    st.error("Gagal memproses data. File mungkin kosong atau terhapus semua oleh aturan filter.")
+                    st.error("Gagal memproses data. File mungkin kosong atau seluruh nama bank terhapus otomatis karena hanya berisi ticker.")
