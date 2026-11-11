@@ -87,6 +87,8 @@ st.markdown("<div class='premium-subtitle'>Sistem Ekstraksi Mikro-Panel & Genera
 # Inisialisasi Memori Aplikasi
 if 'master_panel' not in st.session_state:
     st.session_state['master_panel'] = None
+if 'freq' not in st.session_state:
+    st.session_state['freq'] = None
 
 # ==========================================
 # 2. KAMUS NEGARA GLOBAL 
@@ -140,18 +142,35 @@ with tab_etl:
         st.write("### ⚙️ Konfigurasi")
         st.write("---")
         
-        with st.expander("🗓️ Rentang Waktu Observasi", expanded=True):
-            st.caption("Bisa diisi 2018Q4, 2018:Q4, atau 2018-Q4.")
-            col1, col2 = st.columns(2)
-            start_period = col1.text_input("Dari", value="", placeholder="Cth: 2018Q4")
-            end_period = col2.text_input("Sampai", value="", placeholder="Cth: 2023Q1")
-
-        with st.expander("🎯 Target Negara", expanded=True):
-            opsi_negara = st.radio(
-                "Tindakan Target:",
-                ["1. Otomatis", "2. Paksa 1 Negara", "3. Filter Multi-Negara"]
-            )
+        with st.expander("🗓️ Frekuensi & Observasi Waktu", expanded=True):
+            # 🚀 PEMBARUAN: Menu Dropdown Waktu Tanpa Mengetik
+            frekuensi = st.radio("Pilih Frekuensi Data:", ["Kuartalan (Q)", "Tahunan (Y)", "Bulanan (M)"])
             
+            c1, c2 = st.columns(2)
+            # DARI
+            start_year = c1.selectbox("Dari Tahun:", range(1990, 2041), index=28) # Default 2018
+            if frekuensi == "Kuartalan (Q)":
+                start_sub = c1.selectbox("Dari Kuartal:", ["Q1", "Q2", "Q3", "Q4"], index=3)
+                start_period = f"{start_year}{start_sub}"
+            elif frekuensi == "Bulanan (M)":
+                start_sub = c1.selectbox("Dari Bulan:", [f"{i:02d}" for i in range(1, 13)], index=0)
+                start_period = f"{start_year}-{start_sub}"
+            else:
+                start_period = str(start_year)
+                
+            # SAMPAI
+            end_year = c2.selectbox("Sampai Tahun:", range(1990, 2041), index=33) # Default 2023
+            if frekuensi == "Kuartalan (Q)":
+                end_sub = c2.selectbox("Sampai Kuartal:", ["Q1", "Q2", "Q3", "Q4"], index=0)
+                end_period = f"{end_year}{end_sub}"
+            elif frekuensi == "Bulanan (M)":
+                end_sub = c2.selectbox("Sampai Bulan:", [f"{i:02d}" for i in range(1, 13)], index=11)
+                end_period = f"{end_year}-{end_sub}"
+            else:
+                end_period = str(end_year)
+
+        with st.expander("🎯 Target Negara", expanded=False):
+            opsi_negara = st.radio("Tindakan Target:", ["1. Otomatis", "2. Paksa 1 Negara", "3. Filter Multi-Negara"])
             daftar_negara_unik = sorted(list(set(country_map.values())))
             if "Paksa" in opsi_negara:
                 negara_paksaan = st.selectbox("Tujuan Pemaksaan:", daftar_negara_unik, index=None)
@@ -160,61 +179,30 @@ with tab_etl:
                 negara_pilihan = st.multiselect("Pertahankan hanya:", daftar_negara_unik, default=None)
                 negara_paksaan = None
             else:
-                negara_paksaan = None
-                negara_pilihan = []
+                negara_paksaan = None; negara_pilihan = []
 
         with st.expander("🌍 Koreksi Sandi Otomatis", expanded=False):
             st.caption("Koreksi paksa kode bursa asing jika diperlukan.")
             default_corrections = pd.DataFrame(columns=["Kode Asing (Ketik)", "Ubah Menjadi Negara"])
             edited_corrections = st.data_editor(default_corrections, num_rows="dynamic", use_container_width=True)
-            custom_country_map = {}
-            for _, row in edited_corrections.iterrows():
-                if pd.notna(row.get("Kode Asing (Ketik)")) and pd.notna(row.get("Ubah Menjadi Negara")):
-                    k = str(row["Kode Asing (Ketik)"]).strip().upper()
-                    v = str(row["Ubah Menjadi Negara"]).strip().upper()
-                    if k and v: custom_country_map[k] = v
+            custom_country_map = {str(row["Kode Asing (Ketik)"]).strip().upper(): str(row["Ubah Menjadi Negara"]).strip().upper() 
+                                  for _, row in edited_corrections.iterrows() if pd.notna(row.get("Kode Asing (Ketik)")) and pd.notna(row.get("Ubah Menjadi Negara"))}
                     
-        # BUKU SAKU NEGARA DIKEMBALIKAN
         with st.expander("📚 Buku Saku Kode Bloomberg", expanded=False):
-            st.caption("Daftar kode negara bawaan Bloomberg.")
             df_kamus = pd.DataFrame(list(country_map.items()), columns=["KODE", "NAMA NEGARA"])
             st.dataframe(df_kamus, hide_index=True, use_container_width=True, height=250)
 
-        with st.expander("🛡️ Proteksi Duplikat", expanded=True):
-            opsi_duplikat = st.radio(
-                "Pilih Mode Deteksi:",
-                [
-                    "Biarkan semua data (Jangan hapus)", 
-                    "Hapus jika NAMA BANK persis sama",
-                    "Hapus jika NILAI DATA sama (Silang Negara/Bank Hantu)"
-                ],
-                index=2
-            )
+        with st.expander("🛡️ Proteksi Duplikat", expanded=False):
+            opsi_duplikat = st.radio("Pilih Mode Deteksi:", ["Biarkan semua data (Jangan hapus)", "Hapus jika NAMA BANK persis sama", "Hapus jika NILAI DATA sama (Silang Negara/Bank Hantu)"], index=2)
 
-        with st.expander("⚖️ Desain Tabel Stata", expanded=True):
-            opsi_panel = st.radio(
-                "Format Panel Akhir:",
-                [
-                    "Unbalanced (Aman: Pertahankan sel kosong)", 
-                    "Balanced (Ketat: Tendang bank yang tidak utuh)"
-                ],
-                index=0
-            )
+        with st.expander("⚖️ Desain Tabel Stata", expanded=False):
+            opsi_panel = st.radio("Format Panel Akhir:", ["Unbalanced (Aman: Pertahankan sel kosong)", "Balanced (Ketat: Tendang bank yang tidak utuh)"], index=0)
 
     col_up1, col_up2 = st.columns(2)
     with col_up1:
-        uploaded_files = st.file_uploader(
-            "🏢 1. Unggah Mikro Bloomberg (.xlsx)", 
-            type=["xlsx"], 
-            accept_multiple_files=True
-        )
+        uploaded_files = st.file_uploader("🏢 1. Unggah Mikro Bloomberg (.xlsx)", type=["xlsx"], accept_multiple_files=True)
     with col_up2:
-        uploaded_wb_files = st.file_uploader(
-            "🌍 2. Unggah Makro World Bank (.xlsx)", 
-            type=["xlsx", "xls"], 
-            accept_multiple_files=True,
-            help="Otomatis diselaraskan ke negara dan tahun terkait. Hanya diletakkan di Q4 atau Bulan 12."
-        )
+        uploaded_wb_files = st.file_uploader("🌍 2. Unggah Makro World Bank (.xlsx)", type=["xlsx", "xls"], accept_multiple_files=True, help="Hanya diletakkan di Q4 atau Bulan 12.")
 
     st.markdown("<br>", unsafe_allow_html=True)
     col_spacer1, col_btn, col_spacer2 = st.columns([1, 2, 1])
@@ -226,9 +214,10 @@ with tab_etl:
     if mulai_proses:
         if not uploaded_files:
             st.warning("⚠️ Mohon unggah file Excel Bloomberg terlebih dahulu.")
-        elif not start_period or not end_period:
-            st.error("🚨 WAKTU OBSERVASI KOSONG: Anda wajib mengisi 'Dari' dan 'Sampai'.")
         else:
+            # Simpan frekuensi ke memori untuk Tab Stata
+            st.session_state['freq'] = frekuensi
+            
             start_period_safe = start_period.replace(":", "").replace("-", "").strip().upper()
             end_period_safe = end_period.replace(":", "").replace("-", "").strip().upper()
             
@@ -254,11 +243,9 @@ with tab_etl:
                                 t = str(row['Ticker']).strip()
                                 n = str(row['Name']).strip().upper()
                                 if n not in ['NAN', 'NONE', 'NULL', 'NA', ''] and len(n) > 2:
-                                    if t not in global_ticker_map:
-                                        global_ticker_map[t] = n
+                                    if t not in global_ticker_map: global_ticker_map[t] = n
                                     else:
-                                        if len(n) < len(global_ticker_map[t]):
-                                            global_ticker_map[t] = n
+                                        if len(n) < len(global_ticker_map[t]): global_ticker_map[t] = n
                                             
                     st.caption("📅 Menganalisis frekuensi waktu Bloomberg...")
                     valid_periods_set = set()
@@ -294,44 +281,34 @@ with tab_etl:
                         mask_kosong = df['bank'].isin(['NAN', 'NONE', 'NULL', 'NA', ''])
                         df.loc[mask_kosong, 'bank'] = df.loc[mask_kosong, 'Ticker_Clean'].map(global_ticker_map)
                         
-                        mask_invalid_name = (
-                            df['bank'].isna() | 
-                            df['bank'].isin(['NAN', 'NONE', 'NULL', 'NA', '']) | 
-                            df['bank'].astype(str).str.contains(' EQUITY', case=False, na=False)
-                        )
+                        mask_invalid_name = (df['bank'].isna() | df['bank'].isin(['NAN', 'NONE', 'NULL', 'NA', '']) | df['bank'].astype(str).str.contains(' EQUITY', case=False, na=False))
                         df = df[~mask_invalid_name].copy()
                         df['country'] = df['country'].astype(str).str.strip().str.upper()
                         
-                        if "Paksa" in opsi_negara and negara_paksaan:
-                            df['country'] = negara_paksaan
+                        if "Paksa" in opsi_negara and negara_paksaan: df['country'] = negara_paksaan
                         elif "Filter" in opsi_negara and negara_pilihan:
                             df = df[df['country'].isin(negara_pilihan)]
                             if df.empty: continue
                         
                         rename_dict = {col: str(col).split(":", 1)[1].strip().upper() for col in year_cols if str(col).split(":", 1)[1].strip().upper() in requested_periods_list}
-                        for col in rename_dict.keys():
-                            df[col] = pd.to_numeric(df[col], errors='coerce')
+                        for col in rename_dict.keys(): df[col] = pd.to_numeric(df[col], errors='coerce')
                             
                         df = df.rename(columns=rename_dict)
                         for per in requested_periods_list:
                             if per not in df.columns: df[per] = np.nan
                         
                         df_wide = df[['country', 'bank'] + requested_periods_list]
-                        if clean_var_name not in dict_variabel_dfs_wide:
-                            dict_variabel_dfs_wide[clean_var_name] = []
+                        if clean_var_name not in dict_variabel_dfs_wide: dict_variabel_dfs_wide[clean_var_name] = []
                         dict_variabel_dfs_wide[clean_var_name].append(df_wide)
                         progress_bar.progress((i + 1) / len(uploaded_files))
                     
                     st.caption("🔄 Mengonsolidasi & Membasmi Bank Duplikat...")
-                    all_processed_dfs = []
-                    mikro_vars = list(dict_variabel_dfs_wide.keys())
-                    makro_vars = []
+                    all_processed_dfs, mikro_vars, makro_vars = [], list(dict_variabel_dfs_wide.keys()), []
                     
                     for var_name, list_dfs in dict_variabel_dfs_wide.items():
                         if not list_dfs: continue
                         df_var = pd.concat(list_dfs, ignore_index=True)
-                        for col in requested_periods_list:
-                            df_var[col] = pd.to_numeric(df_var[col], errors='coerce')
+                        for col in requested_periods_list: df_var[col] = pd.to_numeric(df_var[col], errors='coerce')
                             
                         df_var = df_var.groupby(['country', 'bank'], as_index=False)[requested_periods_list].max()
                         
@@ -341,13 +318,9 @@ with tab_etl:
                         df_var['is_derivative'] = df_var['bank'].astype(str).str.contains(r'-RIGHT|-RTS|-SDR|ADR|FOREIGN|RIGHTS', regex=True, case=False)
                         df_var['bank_len'] = df_var['bank'].str.len()
                         
-                        df_var = df_var.sort_values(
-                            by=['is_standard', 'is_valid_bank_name', 'is_ticker_name', 'is_derivative', 'bank_len', 'bank'], 
-                            ascending=[False, False, True, True, True, True]
-                        )
+                        df_var = df_var.sort_values(by=['is_standard', 'is_valid_bank_name', 'is_ticker_name', 'is_derivative', 'bank_len', 'bank'], ascending=[False, False, True, True, True, True])
                         
-                        if "NAMA BANK" in opsi_duplikat:
-                            df_var = df_var.drop_duplicates(subset=['country', 'bank'], keep='first')
+                        if "NAMA BANK" in opsi_duplikat: df_var = df_var.drop_duplicates(subset=['country', 'bank'], keep='first')
                         elif "NILAI DATA" in opsi_duplikat:
                             has_data = df_var[requested_periods_list].notna().any(axis=1)
                             df_with_data = df_var[has_data].drop_duplicates(subset=requested_periods_list, keep='first')
@@ -369,28 +342,18 @@ with tab_etl:
                             
                             def is_end_of_year(p):
                                 p = str(p).upper().strip()
-                                if len(p) == 4: return True
-                                if p.endswith('Q4') or p.endswith('12'): return True
+                                if len(p) == 4 or p.endswith('Q4') or p.endswith('12'): return True
                                 return False
                             df_master['is_target_macro'] = df_master['period'].apply(is_end_of_year)
                             
-                            wb_rename_map = {
-                                'KOREA, REP.': 'SOUTH KOREA', 'EGYPT, ARAB REP.': 'EGYPT', 'VENEZUELA, RB': 'VENEZUELA', 
-                                'YEMEN, REP.': 'YEMEN', 'IRAN, ISLAMIC REP.': 'IRAN', 'SYRIAN ARAB REPUBLIC': 'SYRIA', 
-                                'RUSSIAN FEDERATION': 'RUSSIA', 'SLOVAK REPUBLIC': 'SLOVAKIA', 'TURKIYE': 'TURKEY', 
-                                'BAHAMAS, THE': 'BAHAMAS', 'CONGO, DEM. REP.': 'DEMOCRATIC REPUBLIC OF THE CONGO'
-                            }
+                            wb_rename_map = {'KOREA, REP.': 'SOUTH KOREA', 'EGYPT, ARAB REP.': 'EGYPT', 'VENEZUELA, RB': 'VENEZUELA', 'YEMEN, REP.': 'YEMEN', 'IRAN, ISLAMIC REP.': 'IRAN', 'SYRIAN ARAB REPUBLIC': 'SYRIA', 'RUSSIAN FEDERATION': 'RUSSIA', 'SLOVAK REPUBLIC': 'SLOVAKIA', 'TURKIYE': 'TURKEY', 'BAHAMAS, THE': 'BAHAMAS', 'CONGO, DEM. REP.': 'DEMOCRATIC REPUBLIC OF THE CONGO'}
                             
                             for wb_file in uploaded_wb_files:
-                                try:
-                                    df_wb = pd.read_excel(wb_file, skiprows=3)
-                                except Exception:
-                                    df_wb = pd.read_excel(wb_file)
+                                try: df_wb = pd.read_excel(wb_file, skiprows=3)
+                                except Exception: df_wb = pd.read_excel(wb_file)
                                 
-                                if 'Indicator Name' in df_wb.columns:
-                                    mac_name = re.sub(r'[^a-zA-Z0-9]', '_', str(df_wb['Indicator Name'].iloc[0])).lower().strip('_')[:32] 
-                                else:
-                                    mac_name = "macro_data"
+                                if 'Indicator Name' in df_wb.columns: mac_name = re.sub(r'[^a-zA-Z0-9]', '_', str(df_wb['Indicator Name'].iloc[0])).lower().strip('_')[:32] 
+                                else: mac_name = "macro_data"
                                     
                                 wb_year_cols = [c for c in df_wb.columns if str(c).isdigit()]
                                 df_wb_long = df_wb.melt(id_vars=['Country Name'], value_vars=wb_year_cols, var_name='Year', value_name=mac_name)
@@ -423,7 +386,6 @@ with tab_etl:
                             kolom_awal = ['country_id', 'bank_id', 'country', 'bank', 'period']
                             df_master = df_master[kolom_awal + mikro_vars + makro_vars]
                             
-                            # Simpan ke Memori Sesi (Untuk Tab 2)
                             st.session_state['master_panel'] = df_master
                             
                             status.update(label="✅ Selesai: Data Panel Siap!", state="complete", expanded=False)
@@ -434,7 +396,7 @@ with tab_etl:
                             m1.metric("Variabel Total", len(mikro_vars) + len(makro_vars))
                             m2.metric("Negara", df_master['country'].nunique())
                             m3.metric("Entitas Bank", f"{df_master['bank'].nunique():,}")
-                            m4.metric("Total N", f"{len(df_master):,}")
+                            m4.metric("Total Observasi", f"{len(df_master):,}")
                             
                             st.dataframe(df_master, use_container_width=True, hide_index=True, height=250)
                             
@@ -464,20 +426,36 @@ with tab_etl:
 # ==============================================================================
 with tab_stata:
     st.write("### 💻 Generator Skrip Stata Ekonometrika")
-    st.caption("Atur variabel Anda di sini, lalu salin kode Stata yang dihasilkan langsung ke Do-file Editor Anda.")
+    st.caption("Mesin ini mendeteksi otomatis jenis data Anda (Panel / Time Series / Cross-Section) dan merakit skrip Stata yang paling presisi.")
     
     if st.session_state['master_panel'] is None:
-        st.info("👈 Silakan unggah dan kompilasi data Excel Anda di **Tab 1** terlebih dahulu agar mesin bisa mendeteksi nama variabel Anda.")
+        st.info("👈 Silakan unggah dan kompilasi data Excel Anda di **Tab 1** terlebih dahulu agar mesin bisa membaca struktur data Anda.")
     else:
         df_stata = st.session_state['master_panel']
-        # Hilangkan kolom identitas bawaan, ambil murni nama variabel untuk dianalisis
+        freq_state = st.session_state.get('freq', 'Tahunan (Y)')
+        
+        # Detektor Tipe Data
+        jml_bank = df_stata['bank'].nunique()
+        jml_waktu = df_stata['period'].nunique()
+        
+        if jml_bank > 1 and jml_waktu > 1:
+            tipe_data = "PANEL DATA"
+            warna_badge = "blue"
+        elif jml_bank == 1 and jml_waktu > 1:
+            tipe_data = "TIME SERIES"
+            warna_badge = "green"
+        else:
+            tipe_data = "CROSS-SECTION"
+            warna_badge = "orange"
+            
+        st.markdown(f"**📌 Terdeteksi Struktur Data:** :{warna_badge}[**{tipe_data}**] (N={jml_bank}, T={jml_waktu})")
+        
         daftar_vars = [col for col in df_stata.columns if col not in ['country_id', 'bank_id', 'country', 'bank', 'period']]
         
         col_y, col_x = st.columns([1, 2])
         with col_y:
             y_var = st.selectbox("Pilih Variabel Terikat (Y):", daftar_vars)
         with col_x:
-            # Ambil semua variabel selain Y sebagai kandidat X
             x_vars = st.multiselect("Pilih Variabel Bebas (X):", [v for v in daftar_vars if v != y_var])
             
         st.write("---")
@@ -487,62 +465,70 @@ with tab_stata:
             else:
                 x_str = " ".join(x_vars)
                 
-                # Meracik struktur Do-file Skripsi / Tesis
-                do_code = f"""* ==============================================================================
-* STATA DO-FILE: PANEL DATA ANALYSIS & ROBUSTNESS CHECKS
-* GENERATED BY: ASSISTANCE BLOOMBERG ENGINE
-* ==============================================================================
-
-* 1. PERSIAPAN DATA (Membersihkan memori dan menetapkan struktur panel)
-clear all
-capture log close
-
-* [CATATAN]: Pastikan Anda sudah mengimpor file Excel hasil dari Tab 1 sebelum menjalankan kode ini.
-* import excel "Data_Panel.xlsx", sheet("Master_Data") firstrow clear
-
-* Deklarasi Data Panel (Entity: bank_id, Time: Mengubah period menjadi numerik)
-* Buat variabel waktu kuartalan/tahunan agar dikenali Stata
-gen time_q = quarterly(period, "YQ")
-format time_q %tq
+                # 1. LOGIKA WAKTU (Membaca tipe frekuensi dari Tab 1)
+                stata_time_logic = ""
+                if freq_state == "Kuartalan (Q)":
+                    stata_time_logic = """* Membersihkan teks waktu
+gen time_val = quarterly(period, "YQ")
+format time_val %tq
 drop period
-rename time_q period
+rename time_val period"""
+                elif freq_state == "Bulanan (M)":
+                    stata_time_logic = """* Membersihkan teks waktu (Misal format 2018-12)
+* Ubah tanda strip agar rapi dibaca Stata
+replace period = subinstr(period, "-", "", .)
+gen time_val = monthly(period, "YM")
+format time_val %tm
+drop period
+rename time_val period"""
+                else:
+                    stata_time_logic = """* Format waktu Tahunan
+gen time_val = real(period)
+format time_val %ty
+drop period
+rename time_val period"""
 
-* Deklarasikan sebagai Panel
-xtset bank_id period
+                # 2. LOGIKA SETTING STRUKTUR
+                if tipe_data == "PANEL DATA":
+                    stata_set_logic = "xtset bank_id period"
+                    
+                    stata_core_logic = f"""
+* ==============================================================================
+* 3. UJI STASIONERITAS (UNIT ROOT TESTS)
+* ==============================================================================
+* Uji stasioneritas penting untuk makroekonomi/keuangan panel (hindari spurious regression)
+foreach var of varlist {y_var} {x_str} {{
+    quietly xtunitroot llc `var'
+    di "Levin-Lin-Chu Unit Root Test for `var': p-value = " r(p)
+    quietly xtunitroot ips `var'
+    di "Im-Pesaran-Shin Unit Root Test for `var': p-value = " r(p)
+}}
 
 * ==============================================================================
-* 2. STATISTIK DESKRIPTIF & UJI KORELASI
+* 4. EKSPLORASI LAG & UJI ASUMSI KLASIK PANEL
 * ==============================================================================
-* Menampilkan ringkasan statistik
-sum {y_var} {x_str}
+* Menambahkan Efek Masa Lalu (Lag 1 dan Lag 2) pada model OLS Dasar
+regress {y_var} L.{y_var} L2.{y_var} {x_str} L.({x_str})
 
-* Matriks Korelasi (Pearson)
-pwcorr {y_var} {x_str}, star(0.05) sig
-
-* ==============================================================================
-* 3. UJI ASUMSI KLASIK PANEL
-* ==============================================================================
 * A. Uji Multikolinearitas (VIF)
 regress {y_var} {x_str}
 vif
 
-* B. Uji Heteroskedastisitas (Modified Wald test for groupwise heteroskedasticity)
-xtreg {y_var} {x_str}, fe
+* B. Uji Heteroskedastisitas (Modified Wald test)
+quietly xtreg {y_var} {x_str}, fe
 xttest3
 
-* C. Uji Autokorelasi (Wooldridge test)
-* (Pastikan Anda sudah menginstal xtserial di Stata: ssc install xtserial)
+* C. Uji Autokorelasi (Wooldridge test) - (ssc install xtserial)
 xtserial {y_var} {x_str}
 
-* D. Uji Cross-Sectional Dependence (Pesaran CD Test)
-* (Pastikan sudah terinstal: ssc install xtcd)
+* D. Uji Cross-Sectional Dependence (Pesaran CD) - (ssc install xtcd)
 quietly xtreg {y_var} {x_str}, fe
 xtcd
 
 * ==============================================================================
-* 4. PEMILIHAN MODEL PANEL UTAMA
+* 5. PEMILIHAN MODEL PANEL UTAMA
 * ==============================================================================
-* A. Pooled OLS vs Fixed Effect (Chow Test / F-Test)
+* A. Pooled OLS vs Fixed Effect (Chow Test)
 quietly xtreg {y_var} {x_str}, fe
 estimates store fe_model
 
@@ -550,19 +536,17 @@ estimates store fe_model
 quietly xtreg {y_var} {x_str}, re
 estimates store re_model
 
-* C. Hausman Test (Memilih antara FE dan RE)
+* C. Hausman Test (FE vs RE)
 hausman fe_model re_model
 
-* D. Breusch-Pagan Lagrange Multiplier (LM) Test (Memilih OLS vs RE)
+* D. Breusch-Pagan LM Test (OLS vs RE)
 quietly xtreg {y_var} {x_str}, re
 xttest0
 
 * ==============================================================================
-* 5. ESTIMASI MODEL TERBAIK & UJI ROBUSTNESS (VCE ROBUST)
+* 6. ESTIMASI MODEL TERBAIK & ADVANCED ROBUSTNESS CHECK
 * ==============================================================================
-* (Gunakan opsi 'vce(robust)' atau 'vce(cluster bank_id)' untuk mengobati heteroskedastisitas)
-
-* Model 1: Pooled OLS (Robust)
+* Model 1: Pooled OLS (Robust Standard Errors)
 regress {y_var} {x_str}, vce(cluster bank_id)
 estimates store OLS_Rob
 
@@ -574,17 +558,19 @@ estimates store FE_Rob
 xtreg {y_var} {x_str}, re vce(robust)
 estimates store RE_Rob
 
-* Model 4: First Difference (FD)
-* (Melihat pengaruh jangka pendek dengan cara mengurangi selisih tahun)
-* (Membutuhkan data tanpa jeda/gap waktu. Gunakan dengan hati-hati)
-* regress d.{y_var} d.({x_str}), vce(robust)
+* Model 4: Feasible Generalized Least Squares (FGLS) 
+* (Mengobati Heteroskedastisitas & Autokorelasi AR1)
+xtgls {y_var} {x_str}, panels(hetero) corr(ar1)
+estimates store FGLS_Mod
+
+* Model 5: Panel Corrected Standard Errors (PCSE)
+xtpcse {y_var} {x_str}, correlation(ar1)
+estimates store PCSE_Mod
 
 * ==============================================================================
-* 6. DYNAMIC PANEL ESTIMATION (GMM)
+* 7. DYNAMIC PANEL ESTIMATION (GMM)
 * ==============================================================================
-* Jika terdapat endogenitas atau jika variabel terikat dipengaruhi oleh nilai masa lalunya (Lag)
-* Gunakan Arellano-Bond (Difference GMM)
-* (Gunakan xtabond2 - ssc install xtabond2)
+* Mengatasi masalah Endogenitas dan Lag menggunakan Arellano-Bond (ssc install xtabond2)
 
 * Difference GMM (Satu Lag Y)
 xtabond2 {y_var} l.{y_var} {x_str}, gmm(l.{y_var}, lag(2 .)) iv({x_str}) noleveleq robust small
@@ -595,28 +581,147 @@ xtabond2 {y_var} l.{y_var} {x_str}, gmm(l.{y_var}, lag(2 .)) iv({x_str}) robust 
 estimates store GMM_Sys
 
 * ==============================================================================
-* 7. EXPORT TABEL HASIL REGRESI
+* 8. EXPORT TABEL HASIL REGRESI (ssc install estout)
 * ==============================================================================
-* (Pastikan Anda sudah menginstal estout: ssc install estout)
-
-* Ekspor perbandingan model OLS, FE, dan RE ke Word (.rtf)
-esttab OLS_Rob FE_Rob RE_Rob using "Hasil_Regresi_Panel.rtf", replace ///
+esttab OLS_Rob FE_Rob RE_Rob FGLS_Mod PCSE_Mod using "Hasil_Regresi_Panel.rtf", replace ///
     b(4) se(4) star(* 0.10 ** 0.05 *** 0.01) ///
-    title("Tabel 1: Hasil Uji Regresi Panel (Robust)") ///
-    mtitle("Pooled OLS" "Fixed Effect" "Random Effect") ///
+    title("Tabel 1: Hasil Uji Regresi Panel & Robustness") ///
+    mtitle("Pooled OLS" "FE" "RE" "FGLS" "PCSE") ///
     stats(r2 r2_w r2_o N, labels("R-Squared" "R2 Within" "R2 Overall" "Observations"))
 
-* Ekspor model GMM ke tabel terpisah
 esttab GMM_Diff GMM_Sys using "Hasil_Regresi_GMM.rtf", replace ///
     b(4) se(4) star(* 0.10 ** 0.05 *** 0.01) ///
     title("Tabel 2: Hasil Uji Dynamic Panel (GMM)") ///
     mtitle("Diff GMM" "Sys GMM") ///
     stats(N, labels("Observations"))
+"""
 
+                elif tipe_data == "TIME SERIES":
+                    stata_set_logic = "tsset period"
+                    stata_core_logic = f"""
+* ==============================================================================
+* 3. UJI STASIONERITAS (ADF & Phillips-Perron)
+* ==============================================================================
+foreach var of varlist {y_var} {x_str} {{
+    dfuller `var', lag(2)
+    pperron `var'
+}}
+
+* ==============================================================================
+* 4. EKSPLORASI LAG OPTIMAL & KOINTEGRASI
+* ==============================================================================
+* Mencari panjang lag optimal (AIC, SBIC)
+varsoc {y_var} {x_str}
+
+* Uji Kointegrasi Johansen (Ubah lag sesuai hasil varsoc)
+vecrank {y_var} {x_str}, lags(2)
+
+* ==============================================================================
+* 5. ESTIMASI MODEL (OLS, VAR, VECM, ARIMA)
+* ==============================================================================
+* Model 1: OLS dengan Lag
+regress {y_var} L.{y_var} {x_str} L.({x_str}), vce(robust)
+estimates store OLS_Lag
+
+* Model 2: ARIMA (Auto-Regressive Integrated Moving Average)
+* Contoh ARIMA(1,0,1) dengan variabel eksogen (ARIMAX)
+arima {y_var} {x_str}, ar(1) ma(1)
+estimates store ARIMAX
+
+* Model 3: Vector Autoregression (VAR)
+var {y_var} {x_str}, lags(1/2)
+estimates store VAR_Mod
+
+* ==============================================================================
+* 6. UJI ASUMSI TIME SERIES
+* ==============================================================================
+* A. Normalitas Residual
+predict res, resid
+sktest res
+
+* B. Uji Autokorelasi Breusch-Godfrey LM test
+estat bgodfrey, lags(1 2)
+
+* C. Uji Efek ARCH (Heteroskedastisitas Time Series)
+estat archlm, lags(1)
+
+* (Opsional) Jika terdapat efek ARCH, jalankan GARCH(1,1)
+arch {y_var} {x_str}, arch(1) garch(1)
+estimates store GARCH_Mod
+
+* ==============================================================================
+* 7. EXPORT TABEL HASIL (ssc install estout)
+* ==============================================================================
+esttab OLS_Lag ARIMAX VAR_Mod GARCH_Mod using "Hasil_Time_Series.rtf", replace ///
+    b(4) se(4) star(* 0.10 ** 0.05 *** 0.01) ///
+    title("Tabel Hasil Estimasi Time Series") ///
+    mtitle("OLS Lags" "ARIMAX" "VAR" "GARCH")
+"""
+                
+                else: # CROSS-SECTION
+                    stata_set_logic = "* Data Cross-Section tidak memerlukan setting panel (tsset/xtset)"
+                    stata_core_logic = f"""
+* ==============================================================================
+* 3. UJI ASUMSI KLASIK CROSS-SECTION
+* ==============================================================================
+* A. Uji Multikolinearitas
+regress {y_var} {x_str}
+vif
+
+* B. Uji Heteroskedastisitas (Breusch-Pagan / Cook-Weisberg)
+hettest
+
+* C. Uji Normalitas Residual
+predict res, resid
+sktest res
+
+* ==============================================================================
+* 4. ESTIMASI MODEL & ROBUSTNESS
+* ==============================================================================
+* Model 1: Standard OLS
+regress {y_var} {x_str}
+estimates store OLS_Std
+
+* Model 2: OLS dengan Robust Standard Errors (Mengobati Heteroskedastisitas)
+regress {y_var} {x_str}, vce(robust)
+estimates store OLS_Rob
+
+* ==============================================================================
+* 5. EXPORT TABEL HASIL (ssc install estout)
+* ==============================================================================
+esttab OLS_Std OLS_Rob using "Hasil_CrossSection.rtf", replace ///
+    b(4) se(4) star(* 0.10 ** 0.05 *** 0.01) ///
+    title("Tabel Hasil Regresi Cross-Section") ///
+    mtitle("Standard OLS" "Robust OLS") ///
+    stats(r2 N, labels("R-Squared" "Observations"))
+"""
+
+                # MENJAHIT KODE FINAL
+                do_code = f"""* ==============================================================================
+* STATA DO-FILE: {tipe_data} ANALYSIS & ROBUSTNESS CHECKS
+* GENERATED BY: ASSISTANCE BLOOMBERG ENGINE
+* ==============================================================================
+
+* 1. PERSIAPAN DATA
+clear all
+capture log close
+
+* [CATATAN]: Pastikan Anda sudah mengimpor file Excel hasil dari Tab 1.
+* import excel "Data_Panel.xlsx", sheet("Master_Data") firstrow clear
+
+{stata_time_logic}
+
+* 2. DEKLARASI STRUKTUR DATA
+{stata_set_logic}
+
+* Menampilkan ringkasan statistik & Korelasi
+sum {y_var} {x_str}
+pwcorr {y_var} {x_str}, star(0.05) sig
+{stata_core_logic}
 * ==============================================================================
 * END OF DO-FILE
 * ==============================================================================
 """
-                st.success("✅ Kode Stata berhasil di-generate!")
+                st.success(f"✅ Kode Stata untuk **{tipe_data}** berhasil di-generate!")
                 st.code(do_code, language="stata")
-                st.info("💡 **Tips:** Salin (Copy) kode di atas, buka aplikasi Stata Anda, tekan **Ctrl+9** (Do-file Editor), lalu tempelkan kodenya. Jangan lupa eksekusi kode hijau di baris ke-9 untuk mengunggah file Excel Anda ke Stata.")
+                st.info("💡 **Tips:** Salin kode di atas (gunakan tombol *Copy* di pojok kanan boks), buka **Do-file Editor (Ctrl+9)** di Stata Anda, lalu tempelkan. Jalankan perlahan demi perlahan (Ctrl+D) per blok (Bab) untuk menganalisis hasilnya.")
