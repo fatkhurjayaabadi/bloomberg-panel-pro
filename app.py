@@ -125,10 +125,11 @@ with st.sidebar:
     st.write("---")
     
     with st.expander("🗓️ Rentang Waktu Observasi", expanded=True):
-        st.caption("Mesin akan mendeteksi otomatis data Tahunan, Triwulan, atau Bulanan.")
+        st.caption("Bisa diisi Tahun bulat (2015), Kuartal (2016Q4), atau Bulan (2016-12).")
         col1, col2 = st.columns(2)
-        start_year = col1.number_input("Dari", value=None, placeholder="Cth: 2015", step=1, min_value=1900, max_value=2100)
-        end_year = col2.number_input("Sampai", value=None, placeholder="Cth: 2023", step=1, min_value=1900, max_value=2100)
+        # 🚀 PERUBAHAN: Input kini berbentuk TEKS bebas, bukan Angka
+        start_period = col1.text_input("Dari", value="", placeholder="Cth: 2016Q4")
+        end_period = col2.text_input("Sampai", value="", placeholder="Cth: 2025Q3")
 
     with st.expander("🎯 Target Negara", expanded=True):
         opsi_negara = st.radio(
@@ -159,7 +160,6 @@ with st.sidebar:
                 v = str(row["Ubah Menjadi Negara"]).strip().upper()
                 if k and v: custom_country_map[k] = v
 
-    # KEMBALINYA FITUR DUPLIKAT
     with st.expander("🛡️ Proteksi Duplikat", expanded=True):
         opsi_duplikat = st.radio(
             "Pilih Mode Deteksi:",
@@ -212,15 +212,20 @@ st.markdown("<hr>", unsafe_allow_html=True)
 if mulai_proses:
     if not uploaded_files:
         st.warning("⚠️ Mohon unggah file Excel Bloomberg terlebih dahulu.")
-    elif start_year is None or end_year is None:
-        st.error("🚨 WAKTU OBSERVASI KOSONG: Anda wajib mengisi 'Dari Tahun' dan 'Sampai Tahun'.")
+    elif not start_period or not end_period:
+        st.error("🚨 WAKTU OBSERVASI KOSONG: Anda wajib mengisi 'Dari' dan 'Sampai'.")
     else:
-        start_year = int(start_year)
-        end_year = int(end_year)
+        # Bersihkan spasi dan jadikan huruf besar (cth: " 2016q4 " -> "2016Q4")
+        start_period = start_period.strip().upper()
+        end_period = end_period.strip().upper()
         
-        if start_year > end_year:
-            st.error("🚨 KESALAHAN LOGIKA: 'Dari Tahun' tidak boleh lebih besar dari 'Sampai Tahun'.")
+        if start_period > end_period:
+            st.error("🚨 KESALAHAN LOGIKA: Periode 'Dari' tidak boleh lebih besar dari periode 'Sampai'.")
         else:
+            # 🚀 ALGORITMA CERDAS: Jika user hanya mengetik "2023", tambahkan karakter "Z" 
+            # agar ia mengangkut seluruh kuartal 2023 (Q1-Q4) tanpa memotongnya.
+            end_period_check = end_period + "Z" if len(end_period) == 4 and end_period.isdigit() else end_period
+
             dict_variabel_dfs_wide = {}
             
             with st.status("🛠️ Mengekstraksi dan Membersihkan Data...", expanded=True) as status:
@@ -247,24 +252,22 @@ if mulai_proses:
                                     if len(n) < len(global_ticker_map[t]):
                                         global_ticker_map[t] = n
                                         
-                # TAHAP 0.5: DETEKSI WAKTU DINAMIS
+                # 🚀 TAHAP 0.5: DETEKSI WAKTU ALFANUMERIK (Mendukung Q1-Q4 dan Bulan)
                 st.caption("📅 Menganalisis frekuensi waktu Bloomberg...")
                 valid_periods_set = set()
                 for fname, df in raw_data_cache:
                     for col in df.columns:
                         if ":" in str(col):
                             raw_period = str(col).split(":", 1)[1].strip().upper()
-                            match = re.search(r'\d{4}', raw_period)
-                            if match:
-                                y = int(match.group())
-                                if start_year <= y <= end_year:
-                                    valid_periods_set.add(raw_period)
+                            # Bandingkan string: Hanya ambil periode di antara batas yang diminta
+                            if start_period <= raw_period <= end_period_check:
+                                valid_periods_set.add(raw_period)
                 
                 requested_periods_list = sorted(list(valid_periods_set))
                 
                 if not requested_periods_list:
                     status.update(label="❌ Kesalahan Data", state="error", expanded=True)
-                    st.error(f"🚨 TIDAK ADA DATA WAKTU: Tidak ditemukan rentang tahun {start_year} - {end_year} di dalam file Excel Anda.")
+                    st.error(f"🚨 TIDAK ADA DATA WAKTU: Tidak ditemukan rentang periode {start_period} s.d {end_period} di dalam file Excel Anda.")
                     st.stop()
                 
                 # TAHAP 1: EKSTRAKSI BLOOMBERG
@@ -318,10 +321,10 @@ if mulai_proses:
                 
                 st.caption("🔄 Mengeliminasi duplikat Bloomberg...")
                 
-                # TAHAP 2: PEMBERSIHAN DUPLIKAT (SUDAH KEMBALI)
+                # TAHAP 2: PEMBERSIHAN DUPLIKAT
                 all_processed_dfs = []
-                mikro_vars = list(dict_variabel_dfs_wide.keys()) # Variabel Bloomberg saja
-                makro_vars = [] # Variabel World Bank
+                mikro_vars = list(dict_variabel_dfs_wide.keys())
+                makro_vars = []
                 
                 for var_name, list_dfs in dict_variabel_dfs_wide.items():
                     if not list_dfs: continue
@@ -337,7 +340,6 @@ if mulai_proses:
                         ascending=[False, False, True, True, True]
                     )
                     
-                    # LOGIKA DUPLIKAT DIKEMBALIKAN
                     if "NAMA BANK" in opsi_duplikat:
                         df_var = df_var.drop_duplicates(subset=['country', 'bank'], keep='first')
                     elif "NILAI DATA" in opsi_duplikat:
@@ -383,7 +385,7 @@ if mulai_proses:
                             try:
                                 df_wb = pd.read_excel(wb_file, skiprows=3)
                             except Exception:
-                                df_wb = pd.read_excel(wb_file) # Fallback jika barisnya beda
+                                df_wb = pd.read_excel(wb_file)
                             
                             if 'Indicator Name' in df_wb.columns:
                                 raw_macro_name = df_wb['Indicator Name'].iloc[0]
@@ -411,9 +413,7 @@ if mulai_proses:
                                 
                         df_master = df_master.drop(columns=['Merge_Year', 'is_target_macro'])
                     
-                    # 🚀 PERBAIKAN LOGIKA BALANCED (HANYA CEK DATA MIKRO)
                     if "Balanced" in opsi_panel:
-                        # Ia hanya mengecek `mikro_vars` agar tidak terpicu nilai kosong wajar pada Q1-Q3 di kolom Makro
                         bank_cacat = df_master[df_master[mikro_vars].isna().any(axis=1)][['country', 'bank']].drop_duplicates()
                         if not bank_cacat.empty:
                             df_master = df_master.set_index(['country', 'bank'])
@@ -422,7 +422,7 @@ if mulai_proses:
                     
                     if df_master.empty:
                         status.update(label="❌ Kesalahan Logika", state="error", expanded=True)
-                        st.error("🚨 KOSONG TOTAL: Tidak ada bank yang memiliki data absolut 100% penuh di periode ini.")
+                        st.error("🚨 KOSONG TOTAL: Tidak ada bank yang memiliki data absolut penuh di periode yang diminta.")
                     else:
                         df_master = df_master.sort_values(by=['country', 'bank', 'period']).reset_index(drop=True)
                         df_master['country_id'] = df_master.groupby('country').ngroup() + 1
@@ -444,6 +444,10 @@ if mulai_proses:
                         st.markdown("<br>", unsafe_allow_html=True)
                         st.dataframe(df_master, use_container_width=True, hide_index=True, height=400)
                         
+                        # Mencegah error karakter aneh pada nama file
+                        safe_start = re.sub(r'[^a-zA-Z0-9_]', '', start_period)
+                        safe_end = re.sub(r'[^a-zA-Z0-9_]', '', end_period)
+                        
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
                             df_master.to_excel(writer, index=False, sheet_name='Master_Data')
@@ -454,7 +458,7 @@ if mulai_proses:
                             st.download_button(
                                 label="📥 UNDUH FORMAT STATA (.xlsx)",
                                 data=output.getvalue(),
-                                file_name=f"Data_Panel_Final_{start_year}_{end_year}.xlsx",
+                                file_name=f"Data_Panel_{safe_start}_{safe_end}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 use_container_width=True
                             )
