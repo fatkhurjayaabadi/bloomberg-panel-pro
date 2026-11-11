@@ -125,11 +125,10 @@ with st.sidebar:
     st.write("---")
     
     with st.expander("🗓️ Rentang Waktu Observasi", expanded=True):
-        st.caption("Bisa diisi Tahun bulat (2015), Kuartal (2016Q4), atau Bulan (2016-12).")
+        st.caption("Bisa diisi Tahun bulat (2015), Kuartal (2016:Q4), atau Bulan (2016-12).")
         col1, col2 = st.columns(2)
-        # 🚀 PERUBAHAN: Input kini berbentuk TEKS bebas, bukan Angka
-        start_period = col1.text_input("Dari", value="", placeholder="Cth: 2016Q4")
-        end_period = col2.text_input("Sampai", value="", placeholder="Cth: 2025Q3")
+        start_period = col1.text_input("Dari", value="", placeholder="Cth: 2020:Q4")
+        end_period = col2.text_input("Sampai", value="", placeholder="Cth: 2024:Q3")
 
     with st.expander("🎯 Target Negara", expanded=True):
         opsi_negara = st.radio(
@@ -215,15 +214,12 @@ if mulai_proses:
     elif not start_period or not end_period:
         st.error("🚨 WAKTU OBSERVASI KOSONG: Anda wajib mengisi 'Dari' dan 'Sampai'.")
     else:
-        # Bersihkan spasi dan jadikan huruf besar (cth: " 2016q4 " -> "2016Q4")
         start_period = start_period.strip().upper()
         end_period = end_period.strip().upper()
         
         if start_period > end_period:
             st.error("🚨 KESALAHAN LOGIKA: Periode 'Dari' tidak boleh lebih besar dari periode 'Sampai'.")
         else:
-            # 🚀 ALGORITMA CERDAS: Jika user hanya mengetik "2023", tambahkan karakter "Z" 
-            # agar ia mengangkut seluruh kuartal 2023 (Q1-Q4) tanpa memotongnya.
             end_period_check = end_period + "Z" if len(end_period) == 4 and end_period.isdigit() else end_period
 
             dict_variabel_dfs_wide = {}
@@ -252,14 +248,13 @@ if mulai_proses:
                                     if len(n) < len(global_ticker_map[t]):
                                         global_ticker_map[t] = n
                                         
-                # 🚀 TAHAP 0.5: DETEKSI WAKTU ALFANUMERIK (Mendukung Q1-Q4 dan Bulan)
+                # TAHAP 0.5: DETEKSI WAKTU ALFANUMERIK
                 st.caption("📅 Menganalisis frekuensi waktu Bloomberg...")
                 valid_periods_set = set()
                 for fname, df in raw_data_cache:
                     for col in df.columns:
                         if ":" in str(col):
                             raw_period = str(col).split(":", 1)[1].strip().upper()
-                            # Bandingkan string: Hanya ambil periode di antara batas yang diminta
                             if start_period <= raw_period <= end_period_check:
                                 valid_periods_set.add(raw_period)
                 
@@ -321,7 +316,7 @@ if mulai_proses:
                 
                 st.caption("🔄 Mengeliminasi duplikat Bloomberg...")
                 
-                # TAHAP 2: PEMBERSIHAN DUPLIKAT
+                # TAHAP 2: PEMBERSIHAN DUPLIKAT & KONSOLIDASI FILE
                 all_processed_dfs = []
                 mikro_vars = list(dict_variabel_dfs_wide.keys())
                 makro_vars = []
@@ -358,6 +353,11 @@ if mulai_proses:
                 # TAHAP 3: MERGE BLOOMBERG
                 if all_processed_dfs:
                     df_master = reduce(lambda left, right: pd.merge(left, right, on=['country', 'bank', 'period'], how='outer'), all_processed_dfs)
+                    
+                    # 🚀 ALGORITMA KONSOLIDASI (Merapatkan data dari banyak file agar tidak terdeteksi cacat oleh Balanced)
+                    for col in mikro_vars:
+                        df_master[col] = pd.to_numeric(df_master[col], errors='coerce')
+                    df_master = df_master.groupby(['country', 'bank', 'period'], as_index=False)[mikro_vars].max()
                     
                     # TAHAP 4: INTEGRASI WORLD BANK MAKRO
                     if uploaded_wb_files:
@@ -422,7 +422,7 @@ if mulai_proses:
                     
                     if df_master.empty:
                         status.update(label="❌ Kesalahan Logika", state="error", expanded=True)
-                        st.error("🚨 KOSONG TOTAL: Tidak ada bank yang memiliki data absolut penuh di periode yang diminta.")
+                        st.error("🚨 KOSONG TOTAL: Tidak ada bank yang memiliki data absolut penuh di periode yang diminta (Setiap bank yang terpilih harus memiliki data komplit dari awal sampai akhir tanpa terputus).")
                     else:
                         df_master = df_master.sort_values(by=['country', 'bank', 'period']).reset_index(drop=True)
                         df_master['country_id'] = df_master.groupby('country').ngroup() + 1
@@ -444,7 +444,6 @@ if mulai_proses:
                         st.markdown("<br>", unsafe_allow_html=True)
                         st.dataframe(df_master, use_container_width=True, hide_index=True, height=400)
                         
-                        # Mencegah error karakter aneh pada nama file
                         safe_start = re.sub(r'[^a-zA-Z0-9_]', '', start_period)
                         safe_end = re.sub(r'[^a-zA-Z0-9_]', '', end_period)
                         
